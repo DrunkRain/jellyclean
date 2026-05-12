@@ -73,15 +73,46 @@ def _evaluate(item: MediaItem, rule: CleanupRule, now: datetime) -> tuple[bool, 
 
 
 def _deletable_status(item: MediaItem) -> tuple[bool, str | None]:
-    """Can this item actually be deleted via Radarr/Sonarr API in Sprint 4?"""
+    """Can this item actually be deleted via Radarr/Sonarr API in Sprint 4?
+
+    Two distinct causes when not deletable, with different fixes:
+    (A) Jellyfin has no usable provider ID → user must Identify the item in Jellyfin.
+    (B) IDs are present in Jellyfin but the corresponding *arr instance has no entry
+        for this item → user must add it via 'Add Movie' / 'Add Series → Import existing'.
+    """
     if item.media_type == MediaType.movie.value:
-        if item.radarr_id is None:
-            return False, "Non matché dans Radarr — impossible de supprimer proprement"
-        return True, None
+        if item.radarr_id is not None:
+            return True, None
+        if not item.tmdb_id and not item.imdb_id:
+            return False, (
+                "Aucun ID TMDB/IMDB côté Jellyfin. "
+                "Fix : dans Jellyfin → l'item → ⋮ → Identifier → choisir le bon match."
+            )
+        ids = ", ".join(filter(None, [
+            f"TMDB:{item.tmdb_id}" if item.tmdb_id else None,
+            f"IMDB:{item.imdb_id}" if item.imdb_id else None,
+        ]))
+        return False, (
+            f"Jellyfin a les IDs ({ids}) mais Radarr ne connaît pas ce film. "
+            "Fix : dans Radarr → Add Movie → recherche par titre. Il appairera le fichier existant."
+        )
+
     # series
-    if item.sonarr_id is None:
-        return False, "Non matché dans Sonarr — impossible de supprimer proprement"
-    return True, None
+    if item.sonarr_id is not None:
+        return True, None
+    if not item.tvdb_id and not item.imdb_id:
+        return False, (
+            "Aucun ID TVDB/IMDB côté Jellyfin. "
+            "Fix : dans Jellyfin → la série → ⋮ → Identifier → choisir le bon match."
+        )
+    ids = ", ".join(filter(None, [
+        f"TVDB:{item.tvdb_id}" if item.tvdb_id else None,
+        f"IMDB:{item.imdb_id}" if item.imdb_id else None,
+    ]))
+    return False, (
+        f"Jellyfin a les IDs ({ids}) mais Sonarr ne connaît pas cette série. "
+        "Fix : dans Sonarr → Add Series → Import existing (sélectionne le dossier)."
+    )
 
 
 async def preview_scan(db: AsyncSession) -> ScanPreview:

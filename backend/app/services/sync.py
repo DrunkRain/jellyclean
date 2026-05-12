@@ -154,9 +154,14 @@ async def run_sync(db: AsyncSession) -> SyncResult:
                 entry["last_played_at"] = last
                 entry["last_played_by"] = user_name
 
-    # Pull Radarr / Sonarr catalogs for matching (best-effort)
+    # Pull Radarr / Sonarr catalogs for matching (best-effort).
+    # Primary key is TMDB (movies) / TVDB (series). IMDB is kept as a fallback
+    # because Jellyfin sometimes only has IMDB IDs (manual imports) and a few series
+    # are TVDB-less but IMDB-present.
     radarr_by_tmdb: dict[str, int] = {}
+    radarr_by_imdb: dict[str, int] = {}
     sonarr_by_tvdb: dict[str, int] = {}
+    sonarr_by_imdb: dict[str, int] = {}
 
     radarr_cfg = configs.get(ServiceName.radarr.value)
     if _is_usable(radarr_cfg):
@@ -164,8 +169,11 @@ async def run_sync(db: AsyncSession) -> SyncResult:
             radarr_movies = await RadarrClient(radarr_cfg.base_url, radarr_cfg.api_key).list_movies()
             for m in radarr_movies:
                 tmdb = m.get("tmdbId")
+                imdb = m.get("imdbId")
                 if tmdb:
                     radarr_by_tmdb[str(tmdb)] = m["id"]
+                if imdb:
+                    radarr_by_imdb[str(imdb)] = m["id"]
             log.info("Loaded %d Radarr movies for matching", len(radarr_movies))
         except Exception as exc:
             log.warning("Radarr fetch failed (matching skipped): %s", exc)
@@ -177,12 +185,29 @@ async def run_sync(db: AsyncSession) -> SyncResult:
             sonarr_all = await SonarrClient(sonarr_cfg.base_url, sonarr_cfg.api_key).list_series()
             for s in sonarr_all:
                 tvdb = s.get("tvdbId")
+                imdb = s.get("imdbId")
                 if tvdb:
                     sonarr_by_tvdb[str(tvdb)] = s["id"]
-                    sonarr_series_index[s["id"]] = s
+                if imdb:
+                    sonarr_by_imdb[str(imdb)] = s["id"]
+                sonarr_series_index[s["id"]] = s
             log.info("Loaded %d Sonarr series for matching", len(sonarr_all))
         except Exception as exc:
             log.warning("Sonarr fetch failed (matching skipped): %s", exc)
+
+    def _match_radarr(tmdb: str | None, imdb: str | None) -> int | None:
+        if tmdb and tmdb in radarr_by_tmdb:
+            return radarr_by_tmdb[tmdb]
+        if imdb and imdb in radarr_by_imdb:
+            return radarr_by_imdb[imdb]
+        return None
+
+    def _match_sonarr(tvdb: str | None, imdb: str | None) -> int | None:
+        if tvdb and tvdb in sonarr_by_tvdb:
+            return sonarr_by_tvdb[tvdb]
+        if imdb and imdb in sonarr_by_imdb:
+            return sonarr_by_imdb[imdb]
+        return None
 
     now = datetime.now(timezone.utc)
     matched_radarr = 0
@@ -199,7 +224,7 @@ async def run_sync(db: AsyncSession) -> SyncResult:
         path, size = _movie_file_info(m)
         agg = play_agg.get(jid) or {}
 
-        radarr_id = radarr_by_tmdb.get(tmdb) if tmdb else None
+        radarr_id = _match_radarr(tmdb, imdb)
         if radarr_id:
             matched_radarr += 1
 
@@ -230,7 +255,7 @@ async def run_sync(db: AsyncSession) -> SyncResult:
         imdb = _get_provider_id(s, "Imdb")
         agg = play_agg.get(jid) or {}
 
-        sonarr_id = sonarr_by_tvdb.get(tvdb) if tvdb else None
+        sonarr_id = _match_sonarr(tvdb, imdb)
         if sonarr_id:
             matched_sonarr += 1
 

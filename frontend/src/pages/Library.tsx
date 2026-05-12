@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type MediaItem, type SyncSummary } from "../lib/api";
-import { daysSince, formatBytes, formatRelative } from "../lib/format";
+import { daysSince, formatBytes, formatRelative, matchDiagnostic } from "../lib/format";
 
 type SortKey = "name" | "date_added" | "last_played_at" | "file_size_bytes" | "media_type";
 type SortDir = "asc" | "desc";
@@ -291,17 +291,23 @@ export default function Library() {
                       {formatBytes(it.file_size_bytes)}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap text-xs">
-                      {it.media_type === "movie" ? (
-                        it.radarr_id ? (
-                          <span className="text-emerald-400">✓ Radarr</span>
-                        ) : (
-                          <span className="text-amber-500">⚠ Non matché</span>
-                        )
-                      ) : it.sonarr_id ? (
-                        <span className="text-emerald-400">✓ Sonarr</span>
-                      ) : (
-                        <span className="text-amber-500">⚠ Non matché</span>
-                      )}
+                      {(() => {
+                        const diag = matchDiagnostic(it);
+                        return (
+                          <span
+                            title={diag.detail}
+                            className={`cursor-help ${
+                              diag.matched
+                                ? "text-emerald-400"
+                                : diag.cause === "missing-ids"
+                                ? "text-orange-400"
+                                : "text-amber-500"
+                            }`}
+                          >
+                            {diag.short}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-2 text-center">
                       <button
