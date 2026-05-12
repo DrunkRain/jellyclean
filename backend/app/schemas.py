@@ -1,0 +1,51 @@
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.db.models import ServiceName, TestStatus
+
+
+def mask_key(api_key: str) -> str:
+    if not api_key:
+        return ""
+    if len(api_key) <= 4:
+        return "•" * len(api_key)
+    return "•" * 8 + api_key[-4:]
+
+
+class ServiceConfigRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    service: ServiceName
+    base_url: str
+    api_key_masked: str = ""
+    has_api_key: bool = False
+    enabled: bool
+    last_test_status: TestStatus
+    last_test_message: str
+    last_tested_at: datetime | None
+
+    @classmethod
+    def from_model(cls, m) -> "ServiceConfigRead":
+        return cls(
+            service=ServiceName(m.service),
+            base_url=m.base_url,
+            api_key_masked=mask_key(m.api_key),
+            has_api_key=bool(m.api_key),
+            enabled=m.enabled,
+            last_test_status=TestStatus(m.last_test_status),
+            last_test_message=m.last_test_message,
+            last_tested_at=m.last_tested_at,
+        )
+
+
+class ServiceConfigUpdate(BaseModel):
+    base_url: str | None = Field(default=None, max_length=512)
+    api_key: str | None = Field(default=None)
+    enabled: bool | None = None
+
+
+class ConnectionTestResult(BaseModel):
+    success: bool
+    message: str
+    details: dict = {}
