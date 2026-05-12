@@ -9,6 +9,7 @@ type WatchedFilter = "all" | "never" | "30" | "90" | "365";
 
 export default function Library() {
   const [items, setItems] = useState<MediaItem[] | null>(null);
+  const [protectedIds, setProtectedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncSummary | null>(null);
@@ -18,16 +19,35 @@ export default function Library() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [watchedFilter, setWatchedFilter] = useState<WatchedFilter>("all");
   const [unmatchedOnly, setUnmatchedOnly] = useState(false);
+  const [protectedOnly, setProtectedOnly] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
   useEffect(() => {
-    api
-      .listLibrary()
-      .then(setItems)
+    Promise.all([api.listLibrary(), api.listProtections()])
+      .then(([lib, prots]) => {
+        setItems(lib);
+        setProtectedIds(new Set(prots.map((p) => p.jellyfin_id)));
+      })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
   }, []);
+
+  const toggleProtection = async (jellyfinId: string) => {
+    const next = new Set(protectedIds);
+    try {
+      if (protectedIds.has(jellyfinId)) {
+        await api.removeProtection(jellyfinId);
+        next.delete(jellyfinId);
+      } else {
+        await api.addProtection(jellyfinId, "Protégé via la bibliothèque");
+        next.add(jellyfinId);
+      }
+      setProtectedIds(next);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const handleSync = async () => {
     setSyncing(true);
@@ -75,6 +95,8 @@ export default function Library() {
         if (!isUnmatched) return false;
       }
 
+      if (protectedOnly && !protectedIds.has(it.jellyfin_id)) return false;
+
       return true;
     });
 
@@ -90,7 +112,7 @@ export default function Library() {
     });
 
     return out;
-  }, [items, search, typeFilter, watchedFilter, unmatchedOnly, sortKey, sortDir]);
+  }, [items, search, typeFilter, watchedFilter, unmatchedOnly, protectedOnly, protectedIds, sortKey, sortDir]);
 
   const totalSize = useMemo(
     () => filtered.reduce((sum, it) => sum + (it.file_size_bytes || 0), 0),
@@ -185,7 +207,16 @@ export default function Library() {
                 checked={unmatchedOnly}
                 onChange={(e) => setUnmatchedOnly(e.target.checked)}
               />
-              Non matchés uniquement
+              Non matchés
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
+              <input
+                type="checkbox"
+                className="w-4 h-4 accent-brand-500"
+                checked={protectedOnly}
+                onChange={(e) => setProtectedOnly(e.target.checked)}
+              />
+              🛡️ Protégés
             </label>
           </div>
 
@@ -214,6 +245,7 @@ export default function Library() {
                     Taille
                   </Th>
                   <Th>Match</Th>
+                  <Th>🛡️</Th>
                 </tr>
               </thead>
               <tbody>
@@ -270,6 +302,21 @@ export default function Library() {
                       ) : (
                         <span className="text-amber-500">⚠ Non matché</span>
                       )}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        onClick={() => toggleProtection(it.jellyfin_id)}
+                        title={
+                          protectedIds.has(it.jellyfin_id)
+                            ? "Retirer la protection"
+                            : "Protéger (ne jamais supprimer)"
+                        }
+                        className="text-lg hover:scale-110 transition"
+                      >
+                        {protectedIds.has(it.jellyfin_id) ? "🛡️" : (
+                          <span className="opacity-20 hover:opacity-60">🛡️</span>
+                        )}
+                      </button>
                     </td>
                   </tr>
                 ))}

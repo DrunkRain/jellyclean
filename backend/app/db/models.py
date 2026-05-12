@@ -84,6 +84,44 @@ class MediaItem(Base):
     last_synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class CleanupRule(Base):
+    """Singleton row holding the cleanup thresholds. id is always 1."""
+
+    __tablename__ = "cleanup_rule"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    movie_age_days: Mapped[int] = mapped_column(Integer, default=90)
+    movie_unwatched_days: Mapped[int] = mapped_column(Integer, default=30)
+
+    series_age_days: Mapped[int] = mapped_column(Integer, default=90)
+    series_unwatched_days: Mapped[int] = mapped_column(Integer, default=30)
+
+    # If true, series with Sonarr status == "continuing" are never candidates.
+    protect_continuing_series: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Sprint 4+: time an item sits in the "Bientôt supprimé" collection before actual deletion.
+    grace_period_days: Mapped[int] = mapped_column(Integer, default=14)
+
+    # Sprint 4+ master safety switch. Preview/scan ignores this.
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class ProtectedItem(Base):
+    """Items the user has explicitly marked as never-touch. Survives library syncs."""
+
+    __tablename__ = "protected_item"
+
+    jellyfin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class SyncRun(Base):
     """Log of each library sync — useful for the UI ('last synced 5 min ago')."""
 

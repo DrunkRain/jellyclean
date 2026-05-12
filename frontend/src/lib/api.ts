@@ -86,6 +86,52 @@ export interface SyncRun {
   error_message: string;
 }
 
+export interface CleanupRule {
+  enabled: boolean;
+  movie_age_days: number;
+  movie_unwatched_days: number;
+  series_age_days: number;
+  series_unwatched_days: number;
+  protect_continuing_series: boolean;
+  grace_period_days: number;
+  dry_run: boolean;
+  updated_at: string;
+}
+
+export type CleanupRuleUpdate = Partial<Omit<CleanupRule, "updated_at">>;
+
+export interface ScanCandidate {
+  jellyfin_id: string;
+  media_type: MediaType;
+  name: string;
+  file_size_bytes: number | null;
+  date_added: string | null;
+  last_played_at: string | null;
+  last_played_by: string | null;
+  radarr_id: number | null;
+  sonarr_id: number | null;
+  series_status: SeriesStatus | null;
+  reasons: string[];
+  deletable: boolean;
+  deletable_blocker: string | null;
+}
+
+export interface ScanPreview {
+  rule_enabled: boolean;
+  total_items_evaluated: number;
+  candidates: ScanCandidate[];
+  skipped_protected: number;
+  skipped_continuing_series: number;
+  candidates_total_size_bytes: number;
+  deletable_total_size_bytes: number;
+}
+
+export interface ProtectedItem {
+  jellyfin_id: string;
+  reason: string;
+  created_at: string;
+}
+
 export const api = {
   listSettings: () => request<ServiceConfig[]>("/settings"),
   getSetting: (service: ServiceName) => request<ServiceConfig>(`/settings/${service}`),
@@ -100,4 +146,20 @@ export const api = {
   listLibrary: () => request<MediaItem[]>("/library/items"),
   syncLibrary: () => request<SyncSummary>("/library/sync", { method: "POST" }),
   lastSync: () => request<SyncRun | null>("/library/sync/last"),
+
+  getRule: () => request<CleanupRule>("/rule"),
+  updateRule: (payload: CleanupRuleUpdate) =>
+    request<CleanupRule>("/rule", { method: "PUT", body: JSON.stringify(payload) }),
+  scanPreview: () => request<ScanPreview>("/scan/preview", { method: "POST" }),
+
+  listProtections: () => request<ProtectedItem[]>("/protections"),
+  addProtection: (jellyfinId: string, reason = "") =>
+    request<ProtectedItem>(`/protections/${jellyfinId}`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  removeProtection: async (jellyfinId: string): Promise<void> => {
+    const res = await fetch(`/api/protections/${jellyfinId}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+  },
 };

@@ -100,3 +100,66 @@ class SyncSummary(BaseModel):
     items_matched_radarr: int
     items_matched_sonarr: int
     error_message: str = ""
+
+
+class CleanupRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    enabled: bool
+    movie_age_days: int
+    movie_unwatched_days: int
+    series_age_days: int
+    series_unwatched_days: int
+    protect_continuing_series: bool
+    grace_period_days: int
+    dry_run: bool
+    updated_at: datetime
+
+
+class CleanupRuleUpdate(BaseModel):
+    enabled: bool | None = None
+    movie_age_days: int | None = Field(default=None, ge=0, le=3650)
+    movie_unwatched_days: int | None = Field(default=None, ge=0, le=3650)
+    series_age_days: int | None = Field(default=None, ge=0, le=3650)
+    series_unwatched_days: int | None = Field(default=None, ge=0, le=3650)
+    protect_continuing_series: bool | None = None
+    grace_period_days: int | None = Field(default=None, ge=0, le=365)
+    dry_run: bool | None = None
+
+
+class ScanCandidate(BaseModel):
+    jellyfin_id: str
+    media_type: str
+    name: str
+    file_size_bytes: int | None
+    date_added: datetime | None
+    last_played_at: datetime | None
+    last_played_by: str | None
+    radarr_id: int | None
+    sonarr_id: int | None
+    series_status: str | None
+    reasons: list[str]
+    deletable: bool  # false if not matched in Radarr/Sonarr — diagnostic
+    deletable_blocker: str | None = None  # why not deletable
+
+
+class ScanPreview(BaseModel):
+    rule_enabled: bool
+    total_items_evaluated: int
+    candidates: list[ScanCandidate]
+    skipped_protected: int
+    skipped_continuing_series: int
+    candidates_total_size_bytes: int
+    deletable_total_size_bytes: int
+
+
+class ProtectedItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    jellyfin_id: str
+    reason: str
+    created_at: datetime
+
+
+class ProtectedItemCreate(BaseModel):
+    reason: str = ""

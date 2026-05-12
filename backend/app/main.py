@@ -8,6 +8,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.health import router as health_router
 from app.api.library import router as library_router
+from app.api.protections import router as protections_router
+from app.api.rule import router as rule_router
 from app.api.settings import router as settings_router
 from app.config import settings
 from app.db.session import init_db
@@ -32,6 +34,8 @@ app = FastAPI(title="JellyClean", version="0.1.0", lifespan=lifespan)
 app.include_router(health_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(library_router, prefix="/api")
+app.include_router(rule_router, prefix="/api")
+app.include_router(protections_router, prefix="/api")
 
 
 FRONTEND_DIR = Path(__file__).parent.parent / "static"
