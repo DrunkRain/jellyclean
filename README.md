@@ -27,7 +27,7 @@ Dans Portainer → **Stacks** → **Add stack** → **Repository** :
 
 Puis **Deploy the stack**. L'image est pré-buildée sur GHCR (multi-arch amd64/arm64), donc le pull est instantané.
 
-Une fois lancé : http://`<ip-serveur>`:8080
+Une fois lancé : http://`<ip-serveur>`:8095
 
 ## 🐳 Déploiement direct (docker compose)
 

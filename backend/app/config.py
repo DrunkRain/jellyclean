@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="JELLYCLEAN_", case_sensitive=False)
 
     host: str = "0.0.0.0"
-    port: int = 8080
+    port: int = 8095
     data_dir: Path = Path("/data")
     log_level: str = "INFO"
 
