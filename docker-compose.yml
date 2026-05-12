@@ -1,0 +1,15 @@
+services:
+  jellyclean:
+    image: ghcr.io/drunkrain/jellyclean:latest
+    container_name: jellyclean
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - jellyclean_data:/data
+    environment:
+      TZ: Europe/Paris
+      JELLYCLEAN_LOG_LEVEL: INFO
+
+volumes:
+  jellyclean_data:

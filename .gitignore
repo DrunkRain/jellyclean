@@ -1,0 +1,46 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===== Node =====
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# ===== App data =====
+data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# ===== Env / secrets =====
+.env
+.env.local
+.env.*.local
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== Claude Code local =====
+.claude/
