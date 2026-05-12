@@ -1,9 +1,12 @@
+from typing import Any
+
 from app.clients.base import BaseClient, TestResult, classify_error
 
 
 class RadarrClient(BaseClient):
     name = "Radarr"
     api_version = "v3"
+    timeout_seconds = 30.0
 
     def _auth_headers(self) -> dict[str, str]:
         return {"X-Api-Key": self.api_key, "Accept": "application/json"}
@@ -21,3 +24,7 @@ class RadarrClient(BaseClient):
             message=f"Connecté à {instance_name} (v{version})",
             details={"version": version, "instance_name": instance_name},
         )
+
+    async def list_movies(self) -> list[dict[str, Any]]:
+        """All movies known to Radarr (whether file-present or just monitored)."""
+        return await self.get(f"/api/{self.api_version}/movie")

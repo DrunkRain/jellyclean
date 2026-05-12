@@ -1,8 +1,15 @@
+from typing import Any
+
 from app.clients.base import BaseClient, TestResult, classify_error
+
+# Fields we always want from /Items — adjust here if we need more later.
+ITEM_FIELDS_MOVIE = "DateCreated,ProviderIds,MediaSources,UserData,Path,Genres"
+ITEM_FIELDS_SERIES = "DateCreated,ProviderIds,UserData,Path,Genres,Status"
 
 
 class JellyfinClient(BaseClient):
     name = "Jellyfin"
+    timeout_seconds = 30.0  # library queries can be slow on big servers
 
     def _auth_headers(self) -> dict[str, str]:
         return {
@@ -23,3 +30,48 @@ class JellyfinClient(BaseClient):
             message=f"Connecté à {server_name} (Jellyfin v{version})",
             details={"server_name": server_name, "version": version, "id": data.get("Id")},
         )
+
+    async def list_users(self) -> list[dict[str, Any]]:
+        """All users on the server. Used to aggregate last-played across users."""
+        return await self.get("/Users")
+
+    async def list_movies(self) -> list[dict[str, Any]]:
+        """Admin view of every Movie in the library, with provider IDs + media sources."""
+        data = await self.get(
+            "/Items",
+            params={
+                "Recursive": "true",
+                "IncludeItemTypes": "Movie",
+                "Fields": ITEM_FIELDS_MOVIE,
+            },
+        )
+        return data.get("Items", [])
+
+    async def list_series(self) -> list[dict[str, Any]]:
+        """Admin view of every Series in the library, with provider IDs + Status."""
+        data = await self.get(
+            "/Items",
+            params={
+                "Recursive": "true",
+                "IncludeItemTypes": "Series",
+                "Fields": ITEM_FIELDS_SERIES,
+            },
+        )
+        return data.get("Items", [])
+
+    async def list_user_played(self, user_id: str) -> list[dict[str, Any]]:
+        """Items (movies + series) that a given user has played at least once.
+
+        Returns each item with its per-user UserData (LastPlayedDate, PlayCount).
+        Series UserData on Jellyfin reflects 'last episode played' for that user.
+        """
+        data = await self.get(
+            f"/Users/{user_id}/Items",
+            params={
+                "Recursive": "true",
+                "IncludeItemTypes": "Movie,Series",
+                "Fields": "UserData",
+                "Filters": "IsPlayed",
+            },
+        )
+        return data.get("Items", [])

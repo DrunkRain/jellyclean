@@ -42,6 +42,50 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export type MediaType = "movie" | "series";
+export type SeriesStatus = "continuing" | "ended" | "unknown";
+
+export interface MediaItem {
+  jellyfin_id: string;
+  media_type: MediaType;
+  name: string;
+  tmdb_id: string | null;
+  tvdb_id: string | null;
+  imdb_id: string | null;
+  radarr_id: number | null;
+  sonarr_id: number | null;
+  date_added: string | null;
+  file_path: string | null;
+  file_size_bytes: number | null;
+  series_status: SeriesStatus | null;
+  last_played_at: string | null;
+  last_played_by: string | null;
+  total_play_count: number;
+  last_synced_at: string;
+}
+
+export interface SyncSummary {
+  success: boolean;
+  duration_seconds: number;
+  items_total: number;
+  movies: number;
+  series: number;
+  items_matched_radarr: number;
+  items_matched_sonarr: number;
+  error_message: string;
+}
+
+export interface SyncRun {
+  id: number;
+  started_at: string;
+  finished_at: string | null;
+  success: boolean;
+  items_total: number;
+  items_matched_radarr: number;
+  items_matched_sonarr: number;
+  error_message: string;
+}
+
 export const api = {
   listSettings: () => request<ServiceConfig[]>("/settings"),
   getSetting: (service: ServiceName) => request<ServiceConfig>(`/settings/${service}`),
@@ -52,4 +96,8 @@ export const api = {
     }),
   testSetting: (service: ServiceName) =>
     request<ConnectionTestResult>(`/settings/${service}/test`, { method: "POST" }),
+
+  listLibrary: () => request<MediaItem[]>("/library/items"),
+  syncLibrary: () => request<SyncSummary>("/library/sync", { method: "POST" }),
+  lastSync: () => request<SyncRun | null>("/library/sync/last"),
 };

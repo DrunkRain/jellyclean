@@ -49,3 +49,54 @@ class ConnectionTestResult(BaseModel):
     success: bool
     message: str
     details: dict = {}
+
+
+class MediaItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    jellyfin_id: str
+    media_type: str
+    name: str
+
+    tmdb_id: str | None = None
+    tvdb_id: str | None = None
+    imdb_id: str | None = None
+
+    radarr_id: int | None = None
+    sonarr_id: int | None = None
+
+    date_added: datetime | None = None
+    file_path: str | None = None
+    file_size_bytes: int | None = None
+
+    series_status: str | None = None
+
+    last_played_at: datetime | None = None
+    last_played_by: str | None = None
+    total_play_count: int = 0
+
+    last_synced_at: datetime
+
+
+class SyncRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    started_at: datetime
+    finished_at: datetime | None = None
+    success: bool
+    items_total: int
+    items_matched_radarr: int
+    items_matched_sonarr: int
+    error_message: str
+
+
+class SyncSummary(BaseModel):
+    success: bool
+    duration_seconds: float
+    items_total: int
+    movies: int
+    series: int
+    items_matched_radarr: int
+    items_matched_sonarr: int
+    error_message: str = ""
