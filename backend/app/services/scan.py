@@ -159,6 +159,7 @@ async def preview_scan(db: AsyncSession) -> ScanPreview:
                 sonarr_id=item.sonarr_id,
                 tmdb_id=item.tmdb_id,
                 tvdb_id=item.tvdb_id,
+                library_name=item.library_name,
                 series_status=item.series_status,
                 reasons=reasons,
                 deletable=deletable,

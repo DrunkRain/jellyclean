@@ -241,6 +241,7 @@ async def run_mark_pass(db: AsyncSession) -> MarkPassResult:
             sonarr_id=cand.sonarr_id,
             tmdb_id=cand.tmdb_id,
             tvdb_id=cand.tvdb_id,
+            library_name=cand.library_name,
             marked_at=now,
             scheduled_delete_at=now + grace,
             reasons=json.dumps(cand.reasons, ensure_ascii=False),

@@ -144,6 +144,7 @@ export interface PendingItem {
   sonarr_id: number | null;
   tmdb_id: string | null;
   tvdb_id: string | null;
+  library_name: string | null;
   marked_at: string;
   scheduled_delete_at: string;
   reasons: string[];

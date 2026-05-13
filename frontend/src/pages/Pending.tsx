@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   api,
@@ -10,6 +10,10 @@ import {
   type PendingItem,
 } from "../lib/api";
 import { daysSince, formatBytes, formatRelative } from "../lib/format";
+
+type SortKey = "name" | "library_name" | "marked_at" | "scheduled_delete_at" | "file_size_bytes";
+type SortDir = "asc" | "desc";
+type DeadlineFilter = "all" | "overdue" | "week" | "later";
 
 const ACTION_LABELS: Record<string, { label: string; color: string }> = {
   "marked-pending": { label: "Marqué", color: "text-amber-400" },
@@ -40,6 +44,71 @@ export default function Pending() {
   const [running, setRunning] = useState<"mark" | "delete" | "cycle" | "delete-now" | null>(null);
   const [result, setResult] = useState<AnyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Filters / sort
+  const [search, setSearch] = useState("");
+  const [libraryFilter, setLibraryFilter] = useState<string>("all");
+  const [deadlineFilter, setDeadlineFilter] = useState<DeadlineFilter>("all");
+  const [sortKey, setSortKey] = useState<SortKey>("scheduled_delete_at");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const availableLibraries = useMemo(() => {
+    if (!items) return [];
+    const set = new Set<string>();
+    for (const it of items) if (it.library_name) set.add(it.library_name);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "fr"));
+  }, [items]);
+
+  const filtered = useMemo(() => {
+    if (!items) return [];
+    const q = search.trim().toLowerCase();
+
+    let out = items.filter((it) => {
+      if (q && !it.name.toLowerCase().includes(q)) return false;
+
+      if (libraryFilter !== "all") {
+        if (libraryFilter === "__unassigned__") {
+          if (it.library_name) return false;
+        } else if (it.library_name !== libraryFilter) {
+          return false;
+        }
+      }
+
+      if (deadlineFilter !== "all") {
+        const daysLeft = daysSince(it.scheduled_delete_at);
+        const remaining = daysLeft === null ? null : -daysLeft;
+        if (remaining === null) return false;
+        if (deadlineFilter === "overdue" && remaining > 0) return false;
+        if (deadlineFilter === "week" && (remaining <= 0 || remaining > 7)) return false;
+        if (deadlineFilter === "later" && remaining <= 7) return false;
+      }
+
+      return true;
+    });
+
+    out = [...out].sort((a, b) => {
+      const dir = sortDir === "asc" ? 1 : -1;
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (av === null && bv === null) return 0;
+      if (av === null) return 1 * dir;
+      if (bv === null) return -1 * dir;
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+
+    return out;
+  }, [items, search, libraryFilter, deadlineFilter, sortKey, sortDir]);
+
+  const onHeaderClick = (key: SortKey) => {
+    if (sortKey === key) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else {
+      setSortKey(key);
+      setSortDir(key === "scheduled_delete_at" || key === "marked_at" ? "asc" : "asc");
+    }
+  };
+  const sortIndicator = (key: SortKey) =>
+    sortKey === key ? <span className="text-slate-400">{sortDir === "asc" ? "▲" : "▼"}</span> : null;
 
   const loadAll = async () => {
     try {
@@ -155,7 +224,8 @@ export default function Pending() {
     }
   };
 
-  const totalSize = (items ?? []).reduce((s, i) => s + (i.file_size_bytes || 0), 0);
+  const filteredTotalSize = filtered.reduce((s, i) => s + (i.file_size_bytes || 0), 0);
+  const totalItems = items?.length ?? 0;
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -306,9 +376,44 @@ export default function Pending() {
 
       {items && items.length > 0 && (
         <>
+          <div className="flex flex-wrap gap-3 items-center">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Rechercher un titre…"
+              className="flex-1 min-w-[200px] px-3 py-2 bg-slate-950 border border-slate-800 rounded-md text-sm focus:outline-none focus:border-brand-500"
+            />
+            <select
+              value={libraryFilter}
+              onChange={(e) => setLibraryFilter(e.target.value)}
+              className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-md text-sm"
+            >
+              <option value="all">Toutes les bibliothèques</option>
+              {availableLibraries.map((lib) => (
+                <option key={lib} value={lib}>
+                  📁 {lib}
+                </option>
+              ))}
+              <option value="__unassigned__">⚠ Sans bibliothèque</option>
+            </select>
+            <select
+              value={deadlineFilter}
+              onChange={(e) => setDeadlineFilter(e.target.value as DeadlineFilter)}
+              className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-md text-sm"
+            >
+              <option value="all">Toutes échéances</option>
+              <option value="overdue">🔴 Échéance dépassée</option>
+              <option value="week">🟡 Sous 7 jours</option>
+              <option value="later">🟢 Plus de 7 jours</option>
+            </select>
+          </div>
+
           <div className="text-xs text-slate-500">
-            {items.length} item{items.length > 1 ? "s" : ""} en attente ·{" "}
-            <span className="font-mono">{formatBytes(totalSize)}</span> à libérer
+            {filtered.length === totalItems
+              ? `${totalItems} item${totalItems > 1 ? "s" : ""} en attente · `
+              : `${filtered.length} / ${totalItems} item${totalItems > 1 ? "s" : ""} · `}
+            <span className="font-mono">{formatBytes(filteredTotalSize)}</span> à libérer
           </div>
 
           <div className="rounded-lg border border-slate-800 overflow-hidden">
@@ -316,17 +421,42 @@ export default function Pending() {
               <thead className="bg-slate-900 text-slate-400">
                 <tr>
                   <th className="px-3 py-2 text-left text-xs font-semibold uppercase">Type</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase">Nom</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase">Marqué</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase">
+                  <Th onClick={() => onHeaderClick("name")} indicator={sortIndicator("name")}>
+                    Nom
+                  </Th>
+                  <Th
+                    onClick={() => onHeaderClick("library_name")}
+                    indicator={sortIndicator("library_name")}
+                  >
+                    Bibliothèque
+                  </Th>
+                  <Th onClick={() => onHeaderClick("marked_at")} indicator={sortIndicator("marked_at")}>
+                    Marqué
+                  </Th>
+                  <Th
+                    onClick={() => onHeaderClick("scheduled_delete_at")}
+                    indicator={sortIndicator("scheduled_delete_at")}
+                  >
                     Suppression prévue
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase">Taille</th>
+                  </Th>
+                  <Th
+                    onClick={() => onHeaderClick("file_size_bytes")}
+                    indicator={sortIndicator("file_size_bytes")}
+                  >
+                    Taille
+                  </Th>
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((it) => {
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-6 text-center text-sm text-slate-500">
+                      Aucun item ne correspond aux filtres actifs.
+                    </td>
+                  </tr>
+                )}
+                {filtered.map((it) => {
                   const daysLeft = daysSince(it.scheduled_delete_at);
                   const remaining = daysLeft !== null ? -daysLeft : null;
                   const overdue = remaining !== null && remaining <= 0;
@@ -341,6 +471,13 @@ export default function Pending() {
                           <div className="text-xs text-slate-500 mt-0.5">
                             {it.reasons.join(" · ")}
                           </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">
+                        {it.library_name ? (
+                          <span>📁 {it.library_name}</span>
+                        ) : (
+                          <span className="text-amber-500">⚠ —</span>
                         )}
                       </td>
                       <td className="px-3 py-2 text-slate-400 whitespace-nowrap text-xs">
@@ -399,6 +536,8 @@ export default function Pending() {
         </>
       )}
 
+      {/* end items table */}
+
       {logs && logs.length > 0 && (
         <div className="border-t border-slate-800 pt-6">
           <h2 className="text-xl font-bold mb-3">Journal d'activité</h2>
@@ -439,5 +578,29 @@ export default function Pending() {
         </div>
       )}
     </div>
+  );
+}
+
+function Th({
+  children,
+  onClick,
+  indicator,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  indicator?: React.ReactNode;
+}) {
+  return (
+    <th
+      onClick={onClick}
+      className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider ${
+        onClick ? "cursor-pointer hover:text-slate-200 select-none" : ""
+      }`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {children}
+        {indicator}
+      </span>
+    </th>
   );
 }

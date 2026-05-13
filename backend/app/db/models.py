@@ -165,6 +165,7 @@ class PendingItem(Base):
     sonarr_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tmdb_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     tvdb_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    library_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     marked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     scheduled_delete_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

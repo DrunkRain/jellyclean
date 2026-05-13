@@ -144,6 +144,7 @@ class ScanCandidate(BaseModel):
     sonarr_id: int | None
     tmdb_id: str | None = None
     tvdb_id: str | None = None
+    library_name: str | None = None
     series_status: str | None
     reasons: list[str]
     deletable: bool  # false if not matched in Radarr/Sonarr — diagnostic
@@ -183,6 +184,7 @@ class PendingItemRead(BaseModel):
     sonarr_id: int | None
     tmdb_id: str | None
     tvdb_id: str | None
+    library_name: str | None = None
     marked_at: datetime
     scheduled_delete_at: datetime
     reasons: list[str] = []  # populated server-side by parsing the stored JSON

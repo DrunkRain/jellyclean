@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ActionLog, PendingItem
+from app.db.models import ActionLog, MediaItem, PendingItem
 from app.db.session import get_session
 from app.schemas import (
     ActionLogRead,
@@ -54,6 +54,18 @@ async def list_pending(db: AsyncSession = Depends(get_session)):
     result = await db.execute(select(PendingItem).order_by(PendingItem.scheduled_delete_at))
     items = list(result.scalars().all())
 
+    # Backfill library_name from MediaItem cache for pending rows created before
+    # library_name was snapshot on PendingItem (one-time legacy migration).
+    missing_lib_ids = [it.jellyfin_id for it in items if it.library_name is None]
+    lib_map: dict[str, str | None] = {}
+    if missing_lib_ids:
+        media_result = await db.execute(
+            select(MediaItem.jellyfin_id, MediaItem.library_name).where(
+                MediaItem.jellyfin_id.in_(missing_lib_ids)
+            )
+        )
+        lib_map = {row[0]: row[1] for row in media_result.all()}
+
     out: list[PendingItemRead] = []
     for it in items:
         try:
@@ -70,6 +82,7 @@ async def list_pending(db: AsyncSession = Depends(get_session)):
                 sonarr_id=it.sonarr_id,
                 tmdb_id=it.tmdb_id,
                 tvdb_id=it.tvdb_id,
+                library_name=it.library_name or lib_map.get(it.jellyfin_id),
                 marked_at=it.marked_at,
                 scheduled_delete_at=it.scheduled_delete_at,
                 reasons=reasons,
