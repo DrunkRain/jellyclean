@@ -77,6 +77,12 @@ class JellyfinClient(BaseClient):
         return data.get("Items", [])
 
     # ===== Collection (BoxSet) management =====
+    #
+    # Jellyfin's Collection endpoints take item ids as a comma-separated query
+    # parameter (?ids=a,b,c). With ~32-char ids + URL-encoded commas, ~230 ids
+    # is enough to overflow the typical 8 KB request-line limit and trigger
+    # HTTP 414 (URI Too Long). We chunk to a conservative 100 ids per request.
+    COLLECTION_CHUNK_SIZE = 100
 
     async def find_collection_by_name(self, name: str) -> dict[str, Any] | None:
         """Locate a Collection (BoxSet) by exact display name. Returns None if not found."""
@@ -94,36 +100,51 @@ class JellyfinClient(BaseClient):
         return None
 
     async def create_collection(self, name: str, item_ids: list[str]) -> dict[str, Any]:
-        """Create a Collection. Jellyfin requires at least one seed item id."""
+        """Create a Collection. Jellyfin requires at least one seed item id.
+
+        Creates with the first chunk only; remaining items are added afterward
+        via add_to_collection (which is itself chunked).
+        """
         if not item_ids:
             raise ValueError("create_collection needs at least one item id")
+        first_chunk = item_ids[: self.COLLECTION_CHUNK_SIZE]
+        rest = item_ids[self.COLLECTION_CHUNK_SIZE :]
+
         async with self._client() as c:
             resp = await c.post(
                 "/Collections",
-                params={"name": name, "ids": ",".join(item_ids)},
+                params={"name": name, "ids": ",".join(first_chunk)},
             )
             resp.raise_for_status()
-            return resp.json()
+            created = resp.json()
+
+        if rest and created.get("Id"):
+            await self.add_to_collection(created["Id"], rest)
+        return created
 
     async def add_to_collection(self, collection_id: str, item_ids: list[str]) -> None:
         if not item_ids:
             return
-        async with self._client() as c:
-            resp = await c.post(
-                f"/Collections/{collection_id}/Items",
-                params={"ids": ",".join(item_ids)},
-            )
-            resp.raise_for_status()
+        for i in range(0, len(item_ids), self.COLLECTION_CHUNK_SIZE):
+            chunk = item_ids[i : i + self.COLLECTION_CHUNK_SIZE]
+            async with self._client() as c:
+                resp = await c.post(
+                    f"/Collections/{collection_id}/Items",
+                    params={"ids": ",".join(chunk)},
+                )
+                resp.raise_for_status()
 
     async def remove_from_collection(self, collection_id: str, item_ids: list[str]) -> None:
         if not item_ids:
             return
-        async with self._client() as c:
-            resp = await c.delete(
-                f"/Collections/{collection_id}/Items",
-                params={"ids": ",".join(item_ids)},
-            )
-            resp.raise_for_status()
+        for i in range(0, len(item_ids), self.COLLECTION_CHUNK_SIZE):
+            chunk = item_ids[i : i + self.COLLECTION_CHUNK_SIZE]
+            async with self._client() as c:
+                resp = await c.delete(
+                    f"/Collections/{collection_id}/Items",
+                    params={"ids": ",".join(chunk)},
+                )
+                resp.raise_for_status()
 
     async def list_collection_items(self, collection_id: str) -> list[dict[str, Any]]:
         """Items currently inside a given Collection."""
