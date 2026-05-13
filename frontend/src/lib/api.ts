@@ -132,6 +132,43 @@ export interface ProtectedItem {
   created_at: string;
 }
 
+export interface PendingItem {
+  jellyfin_id: string;
+  media_type: MediaType;
+  name: string;
+  file_size_bytes: number | null;
+  radarr_id: number | null;
+  sonarr_id: number | null;
+  tmdb_id: string | null;
+  tvdb_id: string | null;
+  marked_at: string;
+  scheduled_delete_at: string;
+  reasons: string[];
+}
+
+export interface ActionLog {
+  id: number;
+  timestamp: string;
+  action: string;
+  jellyfin_id: string;
+  name: string;
+  details: string;
+  success: boolean;
+  error_message: string;
+}
+
+export interface MarkPassResult {
+  success: boolean;
+  duration_seconds: number;
+  rule_enabled: boolean;
+  candidates_total: number;
+  newly_marked: number;
+  unmarked_no_longer_matching: number;
+  items_in_collection_after: number;
+  collection_id: string | null;
+  error_message: string;
+}
+
 export const api = {
   listSettings: () => request<ServiceConfig[]>("/settings"),
   getSetting: (service: ServiceName) => request<ServiceConfig>(`/settings/${service}`),
@@ -162,4 +199,12 @@ export const api = {
     const res = await fetch(`/api/protections/${jellyfinId}`, { method: "DELETE" });
     if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
   },
+
+  runMarkPass: () => request<MarkPassResult>("/cleanup/mark-pass", { method: "POST" }),
+  listPending: () => request<PendingItem[]>("/cleanup/pending"),
+  restorePending: async (jellyfinId: string): Promise<void> => {
+    const res = await fetch(`/api/cleanup/pending/${jellyfinId}/restore`, { method: "POST" });
+    if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+  },
+  actionLog: (limit = 200) => request<ActionLog[]>(`/cleanup/log?limit=${limit}`),
 };

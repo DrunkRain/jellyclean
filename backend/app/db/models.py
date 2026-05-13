@@ -135,3 +135,45 @@ class SyncRun(Base):
     items_matched_radarr: Mapped[int] = mapped_column(Integer, default=0)
     items_matched_sonarr: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str] = mapped_column(Text, default="")
+
+
+class PendingItem(Base):
+    """An item currently flagged for upcoming deletion. Lives in the Jellyfin
+    'Bientôt supprimé' Collection and disappears once it's restored, no longer
+    matches the rule, or gets deleted (Sprint 4B)."""
+
+    __tablename__ = "pending_item"
+
+    jellyfin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    media_type: Mapped[str] = mapped_column(String(16))
+    name: Mapped[str] = mapped_column(String(512))
+
+    # Snapshots — keep them so the Pending page is meaningful even if the
+    # MediaItem cache is wiped/rebuilt mid-cycle.
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    radarr_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sonarr_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tmdb_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    tvdb_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    marked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    scheduled_delete_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    reasons: Mapped[str] = mapped_column(Text, default="")  # JSON-encoded list[str]
+
+
+class ActionLog(Base):
+    """Auditable trail of every cleanup action. Read-only from the UI."""
+
+    __tablename__ = "action_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    action: Mapped[str] = mapped_column(String(48))
+    # Common values: "marked-pending", "unmarked-pending", "restored",
+    #                "collection-add", "collection-remove",
+    #                "would-delete" (dry-run), "deleted", "delete-failed".
+    jellyfin_id: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(512), default="")
+    details: Mapped[str] = mapped_column(Text, default="")
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    error_message: Mapped[str] = mapped_column(Text, default="")

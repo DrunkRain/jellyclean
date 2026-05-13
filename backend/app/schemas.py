@@ -163,3 +163,44 @@ class ProtectedItemRead(BaseModel):
 
 class ProtectedItemCreate(BaseModel):
     reason: str = ""
+
+
+class PendingItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    jellyfin_id: str
+    media_type: str
+    name: str
+    file_size_bytes: int | None
+    radarr_id: int | None
+    sonarr_id: int | None
+    tmdb_id: str | None
+    tvdb_id: str | None
+    marked_at: datetime
+    scheduled_delete_at: datetime
+    reasons: list[str] = []  # populated server-side by parsing the stored JSON
+
+
+class ActionLogRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    timestamp: datetime
+    action: str
+    jellyfin_id: str
+    name: str
+    details: str
+    success: bool
+    error_message: str
+
+
+class MarkPassResult(BaseModel):
+    success: bool
+    duration_seconds: float
+    rule_enabled: bool
+    candidates_total: int
+    newly_marked: int
+    unmarked_no_longer_matching: int
+    items_in_collection_after: int
+    collection_id: str | None
+    error_message: str = ""

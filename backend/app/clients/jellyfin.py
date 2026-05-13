@@ -75,3 +75,60 @@ class JellyfinClient(BaseClient):
             },
         )
         return data.get("Items", [])
+
+    # ===== Collection (BoxSet) management =====
+
+    async def find_collection_by_name(self, name: str) -> dict[str, Any] | None:
+        """Locate a Collection (BoxSet) by exact display name. Returns None if not found."""
+        data = await self.get(
+            "/Items",
+            params={
+                "Recursive": "true",
+                "IncludeItemTypes": "BoxSet",
+                "SearchTerm": name,
+            },
+        )
+        for it in data.get("Items", []):
+            if (it.get("Name") or "").strip().lower() == name.strip().lower():
+                return it
+        return None
+
+    async def create_collection(self, name: str, item_ids: list[str]) -> dict[str, Any]:
+        """Create a Collection. Jellyfin requires at least one seed item id."""
+        if not item_ids:
+            raise ValueError("create_collection needs at least one item id")
+        async with self._client() as c:
+            resp = await c.post(
+                "/Collections",
+                params={"name": name, "ids": ",".join(item_ids)},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def add_to_collection(self, collection_id: str, item_ids: list[str]) -> None:
+        if not item_ids:
+            return
+        async with self._client() as c:
+            resp = await c.post(
+                f"/Collections/{collection_id}/Items",
+                params={"ids": ",".join(item_ids)},
+            )
+            resp.raise_for_status()
+
+    async def remove_from_collection(self, collection_id: str, item_ids: list[str]) -> None:
+        if not item_ids:
+            return
+        async with self._client() as c:
+            resp = await c.delete(
+                f"/Collections/{collection_id}/Items",
+                params={"ids": ",".join(item_ids)},
+            )
+            resp.raise_for_status()
+
+    async def list_collection_items(self, collection_id: str) -> list[dict[str, Any]]:
+        """Items currently inside a given Collection."""
+        data = await self.get(
+            "/Items",
+            params={"ParentId": collection_id, "Recursive": "true"},
+        )
+        return data.get("Items", [])

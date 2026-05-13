@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.cleanup import router as cleanup_router
 from app.api.health import router as health_router
 from app.api.library import router as library_router
 from app.api.protections import router as protections_router
@@ -36,6 +37,7 @@ app.include_router(settings_router, prefix="/api")
 app.include_router(library_router, prefix="/api")
 app.include_router(rule_router, prefix="/api")
 app.include_router(protections_router, prefix="/api")
+app.include_router(cleanup_router, prefix="/api")
 
 
 FRONTEND_DIR = Path(__file__).parent.parent / "static"
