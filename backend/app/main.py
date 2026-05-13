@@ -12,6 +12,7 @@ from app.api.library import router as library_router
 from app.api.protections import router as protections_router
 from app.api.rule import router as rule_router
 from app.api.settings import router as settings_router
+from app.services.scheduler import start_scheduler, stop_scheduler
 from app.config import settings
 from app.db.session import init_db
 
@@ -26,7 +27,9 @@ log = logging.getLogger("jellyclean")
 async def lifespan(_app: FastAPI):
     log.info("Starting JellyClean — data dir: %s", settings.data_dir)
     await init_db()
+    await start_scheduler()
     yield
+    stop_scheduler()
     log.info("Stopping JellyClean")
 
 

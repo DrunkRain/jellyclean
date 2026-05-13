@@ -104,8 +104,13 @@ class CleanupRule(Base):
     # Sprint 4+: time an item sits in the "Bientôt supprimé" collection before actual deletion.
     grace_period_days: Mapped[int] = mapped_column(Integer, default=14)
 
-    # Sprint 4+ master safety switch. Preview/scan ignores this.
+    # Master safety switch. When True, the delete pass logs 'would-delete' but
+    # never calls Radarr/Sonarr/Jellyseerr DELETE. Default True for safety.
     dry_run: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Scheduler — runs a daily full cycle (sync → mark → delete) at the configured hour.
+    schedule_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    schedule_hour: Mapped[int] = mapped_column(Integer, default=3)  # 0–23, server timezone
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow

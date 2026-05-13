@@ -113,6 +113,8 @@ class CleanupRuleRead(BaseModel):
     protect_continuing_series: bool
     grace_period_days: int
     dry_run: bool
+    schedule_enabled: bool
+    schedule_hour: int
     updated_at: datetime
 
 
@@ -125,6 +127,8 @@ class CleanupRuleUpdate(BaseModel):
     protect_continuing_series: bool | None = None
     grace_period_days: int | None = Field(default=None, ge=0, le=365)
     dry_run: bool | None = None
+    schedule_enabled: bool | None = None
+    schedule_hour: int | None = Field(default=None, ge=0, le=23)
 
 
 class ScanCandidate(BaseModel):
@@ -137,6 +141,8 @@ class ScanCandidate(BaseModel):
     last_played_by: str | None
     radarr_id: int | None
     sonarr_id: int | None
+    tmdb_id: str | None = None
+    tvdb_id: str | None = None
     series_status: str | None
     reasons: list[str]
     deletable: bool  # false if not matched in Radarr/Sonarr — diagnostic
@@ -203,4 +209,23 @@ class MarkPassResult(BaseModel):
     unmarked_no_longer_matching: int
     items_in_collection_after: int
     collection_id: str | None
+    error_message: str = ""
+
+
+class DeletePassResult(BaseModel):
+    success: bool
+    duration_seconds: float
+    dry_run: bool
+    candidates_for_deletion: int  # pending_items past their scheduled_delete_at
+    deleted_count: int  # actually deleted (or 'would have' in dry-run)
+    failed_count: int
+    errors: list[str] = []
+
+
+class FullCycleResult(BaseModel):
+    success: bool
+    duration_seconds: float
+    sync: SyncSummary | None = None
+    mark_pass: MarkPassResult | None = None
+    delete_pass: DeletePassResult | None = None
     error_message: str = ""

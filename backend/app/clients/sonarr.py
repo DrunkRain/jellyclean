@@ -28,3 +28,25 @@ class SonarrClient(BaseClient):
     async def list_series(self) -> list[dict[str, Any]]:
         """All series known to Sonarr. Status field tells us 'continuing' vs 'ended'."""
         return await self.get(f"/api/{self.api_version}/series")
+
+    async def delete_series(
+        self,
+        series_id: int,
+        delete_files: bool = True,
+        add_import_exclusion: bool = False,
+    ) -> None:
+        """Delete an entire series (all seasons + files).
+
+        IMPORTANT: add_import_exclusion stays False by default — see the same
+        rationale on RadarrClient.delete_movie. We want Jellyseerr re-requests
+        to work later.
+        """
+        async with self._client() as c:
+            resp = await c.delete(
+                f"/api/{self.api_version}/series/{series_id}",
+                params={
+                    "deleteFiles": "true" if delete_files else "false",
+                    "addImportListExclusion": "true" if add_import_exclusion else "false",
+                },
+            )
+            resp.raise_for_status()

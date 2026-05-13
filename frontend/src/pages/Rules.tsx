@@ -29,7 +29,21 @@ export default function Rules() {
     );
 
   const handleSave = async () => {
-    if (!draft) return;
+    if (!draft || !rule) return;
+
+    // If user is switching DRY-RUN -> LIVE, force a confirmation. This is the
+    // most consequential toggle in the app — once OFF, the next delete pass
+    // really wipes files via Radarr/Sonarr.
+    if (rule.dry_run && !draft.dry_run) {
+      const ok = window.confirm(
+        "⚠️ Tu vas désactiver le DRY-RUN.\n\n" +
+          "À partir de maintenant, le mark pass + delete pass vont RÉELLEMENT supprimer " +
+          "les fichiers via Radarr/Sonarr et nettoyer les demandes Jellyseerr.\n\n" +
+          "Confirmer l'activation du MODE LIVE ?",
+      );
+      if (!ok) return;
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -148,23 +162,84 @@ export default function Rules() {
         </RuleCard>
       </div>
 
-      <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-5 space-y-3">
-        <h3 className="font-semibold">Suppression (Sprint 4)</h3>
-        <p className="text-xs text-slate-500">
-          Ces réglages ne s'appliquent pas encore — ils seront utilisés quand la phase
-          suppression sera implémentée.
-        </p>
+      <div
+        className={`rounded-lg border p-5 space-y-4 ${
+          draft.dry_run
+            ? "border-slate-800 bg-slate-900/60"
+            : "border-red-700/60 bg-red-950/30"
+        }`}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="font-semibold text-lg">Suppression</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              {draft.dry_run
+                ? "DRY-RUN actif — le delete pass logue 'aurait supprimé' mais ne touche à rien."
+                : "🔴 LIVE actif — les suppressions sont réelles via Radarr / Sonarr / Jellyseerr."}
+            </p>
+          </div>
+        </div>
+
         <NumberInput
           label="Délai avant suppression effective (jours)"
-          help="Durée pendant laquelle un item reste dans la Collection 'Bientôt supprimé' avant suppression réelle."
+          help="Durée pendant laquelle un item reste dans la Collection 'Bientôt supprimé' avant que le delete pass ne le supprime."
           value={draft.grace_period_days}
           onChange={(v) => set("grace_period_days", v)}
         />
+
+        <label
+          className={`flex items-start gap-3 cursor-pointer p-3 rounded-md border ${
+            draft.dry_run
+              ? "border-slate-700 bg-slate-950/60"
+              : "border-red-700/60 bg-red-950/40"
+          }`}
+        >
+          <input
+            type="checkbox"
+            className="w-5 h-5 mt-0.5 accent-red-500"
+            checked={!draft.dry_run}
+            onChange={(e) => set("dry_run", !e.target.checked)}
+          />
+          <div className="flex-1">
+            <div className="font-semibold">
+              {draft.dry_run ? "🟢 DRY-RUN — sécurisé" : "🔴 MODE LIVE — suppressions réelles"}
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              Coche pour passer en LIVE. Une confirmation te sera demandée à l'enregistrement.
+            </p>
+          </div>
+        </label>
+      </div>
+
+      <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-5 space-y-4">
+        <div>
+          <h3 className="font-semibold text-lg">⏰ Planificateur</h3>
+          <p className="text-xs text-slate-500 mt-1">
+            Lance automatiquement un cycle complet (sync → mark → delete) tous les jours à
+            l'heure choisie. Heure serveur (UTC dans le container).
+          </p>
+        </div>
         <Toggle
-          label="Mode DRY-RUN (recommandé tant que tu n'es pas confiant)"
-          checked={draft.dry_run}
-          onChange={(v) => set("dry_run", v)}
+          label="Activer la planification quotidienne"
+          checked={draft.schedule_enabled}
+          onChange={(v) => set("schedule_enabled", v)}
         />
+        {draft.schedule_enabled && (
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-slate-400">Heure d'exécution :</label>
+            <select
+              value={draft.schedule_hour}
+              onChange={(e) => set("schedule_hour", parseInt(e.target.value, 10))}
+              className="px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-md text-sm font-mono"
+            >
+              {Array.from({ length: 24 }).map((_, h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, "0")}h00 UTC
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-3">

@@ -23,14 +23,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.jellyfin import JellyfinClient
+from app.clients.jellyseerr import JellyseerrClient
+from app.clients.radarr import RadarrClient
+from app.clients.sonarr import SonarrClient
 from app.db.models import (
     ActionLog,
+    MediaType,
     PendingItem,
     ServiceConfig,
     ServiceName,
 )
-from app.schemas import MarkPassResult, ScanCandidate
+from app.schemas import (
+    DeletePassResult,
+    FullCycleResult,
+    MarkPassResult,
+    ScanCandidate,
+)
 from app.services.scan import get_or_create_rule, preview_scan
+from app.services.sync import run_sync
 
 log = logging.getLogger("jellyclean.cleanup")
 
@@ -228,8 +238,8 @@ async def run_mark_pass(db: AsyncSession) -> MarkPassResult:
             file_size_bytes=cand.file_size_bytes,
             radarr_id=cand.radarr_id,
             sonarr_id=cand.sonarr_id,
-            tmdb_id=None,  # not in ScanCandidate yet, would be a nice add
-            tvdb_id=None,
+            tmdb_id=cand.tmdb_id,
+            tvdb_id=cand.tvdb_id,
             marked_at=now,
             scheduled_delete_at=now + grace,
             reasons=json.dumps(cand.reasons, ensure_ascii=False),
@@ -276,6 +286,261 @@ async def run_mark_pass(db: AsyncSession) -> MarkPassResult:
         unmarked_no_longer_matching=unmarked,
         items_in_collection_after=items_in_collection_after,
         collection_id=collection_id,
+    )
+
+
+async def _remove_from_jellyfin_collection(
+    db: AsyncSession, jellyfin_ids: list[str]
+) -> None:
+    """Best-effort removal from the 'Bientôt supprimé' Collection. Non-fatal on failure."""
+    if not jellyfin_ids:
+        return
+    configs_result = await db.execute(
+        select(ServiceConfig).where(ServiceConfig.service == ServiceName.jellyfin.value)
+    )
+    jf_cfg = configs_result.scalar_one_or_none()
+    if not (jf_cfg and jf_cfg.enabled and jf_cfg.base_url and jf_cfg.api_key):
+        return
+    jf = JellyfinClient(jf_cfg.base_url, jf_cfg.api_key)
+    try:
+        coll = await jf.find_collection_by_name(COLLECTION_NAME)
+        if coll:
+            await jf.remove_from_collection(coll["Id"], jellyfin_ids)
+    except Exception as exc:
+        log.warning("Could not remove ids from Jellyfin Collection: %s", exc)
+
+
+async def _delete_one(
+    db: AsyncSession,
+    pending: PendingItem,
+    radarr: RadarrClient | None,
+    sonarr: SonarrClient | None,
+    jellyseerr: JellyseerrClient | None,
+    dry_run: bool,
+) -> tuple[bool, str | None]:
+    """Delete one item via the appropriate *arr + clean its Jellyseerr request.
+    Returns (success, error_message). In dry_run, logs 'would-delete' and returns success
+    without touching anything external."""
+    is_movie = pending.media_type == MediaType.movie.value
+
+    if dry_run:
+        await _log(
+            db,
+            action="would-delete",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            details=(
+                f"DRY-RUN — supprimerait via "
+                f"{'Radarr' if is_movie else 'Sonarr'} (id={pending.radarr_id or pending.sonarr_id})"
+                + (f", req Jellyseerr pour {'TMDB' if is_movie else 'TVDB'}={pending.tmdb_id or pending.tvdb_id}" if jellyseerr else "")
+            ),
+        )
+        return True, None
+
+    # Real deletion path
+    target_id = pending.radarr_id if is_movie else pending.sonarr_id
+    if target_id is None:
+        msg = f"Pas d'id {'Radarr' if is_movie else 'Sonarr'} — impossible de supprimer."
+        await _log(
+            db,
+            action="delete-failed",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            success=False,
+            error=msg,
+        )
+        return False, msg
+
+    try:
+        if is_movie:
+            assert radarr is not None
+            await radarr.delete_movie(target_id, delete_files=True, add_import_exclusion=False)
+        else:
+            assert sonarr is not None
+            await sonarr.delete_series(target_id, delete_files=True, add_import_exclusion=False)
+    except Exception as exc:
+        msg = f"{exc.__class__.__name__}: {exc}"
+        log.exception("DELETE on *arr failed for %s", pending.name)
+        await _log(
+            db,
+            action="delete-failed",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            success=False,
+            error=msg,
+        )
+        return False, msg
+
+    await _log(
+        db,
+        action="deleted",
+        jellyfin_id=pending.jellyfin_id,
+        name=pending.name,
+        details=f"{'Radarr' if is_movie else 'Sonarr'} id={target_id}, files supprimés",
+    )
+
+    # Best-effort Jellyseerr request cleanup
+    if jellyseerr and (pending.tmdb_id or pending.tvdb_id):
+        try:
+            req = await jellyseerr.find_request_for_media(
+                "movie" if is_movie else "tv",
+                tmdb_id=pending.tmdb_id,
+                tvdb_id=pending.tvdb_id,
+            )
+            if req:
+                await jellyseerr.delete_request(req["id"])
+                await _log(
+                    db,
+                    action="jellyseerr-request-deleted",
+                    jellyfin_id=pending.jellyfin_id,
+                    name=pending.name,
+                    details=f"request id {req['id']}",
+                )
+        except Exception as exc:
+            log.warning("Jellyseerr cleanup failed for %s: %s", pending.name, exc)
+            await _log(
+                db,
+                action="jellyseerr-cleanup-failed",
+                jellyfin_id=pending.jellyfin_id,
+                name=pending.name,
+                success=False,
+                error=str(exc),
+            )
+
+    return True, None
+
+
+async def run_delete_pass(
+    db: AsyncSession, *, force_jellyfin_ids: list[str] | None = None
+) -> DeletePassResult:
+    """Execute pending deletions whose grace period has elapsed.
+
+    If force_jellyfin_ids is provided, only those are processed (used by the
+    'Delete now' button). They still respect the dry_run flag.
+    """
+    started = time.monotonic()
+    rule = await get_or_create_rule(db)
+    now = datetime.now(timezone.utc)
+
+    if force_jellyfin_ids:
+        result = await db.execute(
+            select(PendingItem).where(PendingItem.jellyfin_id.in_(force_jellyfin_ids))
+        )
+        candidates = list(result.scalars().all())
+    else:
+        result = await db.execute(
+            select(PendingItem).where(PendingItem.scheduled_delete_at <= now)
+        )
+        candidates = list(result.scalars().all())
+
+    if not candidates:
+        return DeletePassResult(
+            success=True,
+            duration_seconds=round(time.monotonic() - started, 2),
+            dry_run=rule.dry_run,
+            candidates_for_deletion=0,
+            deleted_count=0,
+            failed_count=0,
+        )
+
+    # Load *arr clients (only what we need)
+    configs_result = await db.execute(select(ServiceConfig))
+    configs = {c.service: c for c in configs_result.scalars().all()}
+
+    def _client_or_none(svc: ServiceName, cls):
+        cfg = configs.get(svc.value)
+        if cfg and cfg.enabled and cfg.base_url and cfg.api_key:
+            return cls(cfg.base_url, cfg.api_key)
+        return None
+
+    radarr = _client_or_none(ServiceName.radarr, RadarrClient)
+    sonarr = _client_or_none(ServiceName.sonarr, SonarrClient)
+    jellyseerr = _client_or_none(ServiceName.jellyseerr, JellyseerrClient)
+
+    deleted = 0
+    failed = 0
+    errors: list[str] = []
+    successfully_processed_ids: list[str] = []
+
+    for pending in candidates:
+        ok, err = await _delete_one(
+            db, pending, radarr, sonarr, jellyseerr, dry_run=rule.dry_run
+        )
+        if ok:
+            deleted += 1
+            successfully_processed_ids.append(pending.jellyfin_id)
+            # In dry-run we keep the pending row so the user can see and re-test;
+            # in LIVE we remove it (it's gone).
+            if not rule.dry_run:
+                await db.delete(pending)
+        else:
+            failed += 1
+            if err:
+                errors.append(f"{pending.name}: {err}")
+
+    # Remove successfully-deleted items from the Jellyfin Collection (LIVE only)
+    if not rule.dry_run and successfully_processed_ids:
+        await _remove_from_jellyfin_collection(db, successfully_processed_ids)
+
+    await db.commit()
+
+    duration = time.monotonic() - started
+    log.info(
+        "Delete pass OK in %.2fs: %d %s, %d failed (dry_run=%s)",
+        duration, deleted, "would-delete" if rule.dry_run else "deleted", failed, rule.dry_run,
+    )
+
+    return DeletePassResult(
+        success=failed == 0,
+        duration_seconds=round(duration, 2),
+        dry_run=rule.dry_run,
+        candidates_for_deletion=len(candidates),
+        deleted_count=deleted,
+        failed_count=failed,
+        errors=errors[:10],  # cap for response size
+    )
+
+
+async def run_full_cycle(db: AsyncSession) -> FullCycleResult:
+    """Sync → mark → delete. Used by the scheduler and by the manual button."""
+    started = time.monotonic()
+    log.info("Full cycle starting")
+
+    # 1. Sync
+    sync_result = await run_sync(db)
+    if not sync_result.success:
+        return FullCycleResult(
+            success=False,
+            duration_seconds=round(time.monotonic() - started, 2),
+            sync=None,  # SyncResult dataclass doesn't match SyncSummary fields one-for-one
+            error_message=f"Sync échouée : {sync_result.error_message}",
+        )
+
+    from app.schemas import SyncSummary  # local import to avoid cycle at module load
+
+    sync_summary = SyncSummary(
+        success=sync_result.success,
+        duration_seconds=round(sync_result.duration_seconds, 2),
+        items_total=sync_result.items_total,
+        movies=sync_result.movies,
+        series=sync_result.series,
+        items_matched_radarr=sync_result.items_matched_radarr,
+        items_matched_sonarr=sync_result.items_matched_sonarr,
+        error_message=sync_result.error_message,
+    )
+
+    # 2. Mark pass
+    mark_result = await run_mark_pass(db)
+
+    # 3. Delete pass — only if mark didn't blow up
+    delete_result = await run_delete_pass(db)
+
+    return FullCycleResult(
+        success=mark_result.success and delete_result.success,
+        duration_seconds=round(time.monotonic() - started, 2),
+        sync=sync_summary,
+        mark_pass=mark_result,
+        delete_pass=delete_result,
     )
 
 

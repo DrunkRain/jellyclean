@@ -95,6 +95,8 @@ export interface CleanupRule {
   protect_continuing_series: boolean;
   grace_period_days: number;
   dry_run: boolean;
+  schedule_enabled: boolean;
+  schedule_hour: number;
   updated_at: string;
 }
 
@@ -169,6 +171,25 @@ export interface MarkPassResult {
   error_message: string;
 }
 
+export interface DeletePassResult {
+  success: boolean;
+  duration_seconds: number;
+  dry_run: boolean;
+  candidates_for_deletion: number;
+  deleted_count: number;
+  failed_count: number;
+  errors: string[];
+}
+
+export interface FullCycleResult {
+  success: boolean;
+  duration_seconds: number;
+  sync: SyncSummary | null;
+  mark_pass: MarkPassResult | null;
+  delete_pass: DeletePassResult | null;
+  error_message: string;
+}
+
 export const api = {
   listSettings: () => request<ServiceConfig[]>("/settings"),
   getSetting: (service: ServiceName) => request<ServiceConfig>(`/settings/${service}`),
@@ -201,6 +222,10 @@ export const api = {
   },
 
   runMarkPass: () => request<MarkPassResult>("/cleanup/mark-pass", { method: "POST" }),
+  runDeletePass: () => request<DeletePassResult>("/cleanup/delete-pass", { method: "POST" }),
+  runFullCycle: () => request<FullCycleResult>("/cleanup/full-cycle", { method: "POST" }),
+  deleteNow: (jellyfinId: string) =>
+    request<DeletePassResult>(`/cleanup/pending/${jellyfinId}/delete-now`, { method: "POST" }),
   listPending: () => request<PendingItem[]>("/cleanup/pending"),
   restorePending: async (jellyfinId: string): Promise<void> => {
     const res = await fetch(`/api/cleanup/pending/${jellyfinId}/restore`, { method: "POST" });

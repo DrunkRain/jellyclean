@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type ActionLog, type CleanupRule, type MarkPassResult, type PendingItem } from "../lib/api";
+import {
+  api,
+  type ActionLog,
+  type CleanupRule,
+  type DeletePassResult,
+  type FullCycleResult,
+  type MarkPassResult,
+  type PendingItem,
+} from "../lib/api";
 import { daysSince, formatBytes, formatRelative } from "../lib/format";
 
 const ACTION_LABELS: Record<string, { label: string; color: string }> = {
@@ -15,13 +23,18 @@ const ACTION_LABELS: Record<string, { label: string; color: string }> = {
   "delete-failed": { label: "Échec suppression", color: "text-red-500" },
 };
 
+type AnyResult =
+  | { kind: "mark"; data: MarkPassResult }
+  | { kind: "delete"; data: DeletePassResult }
+  | { kind: "cycle"; data: FullCycleResult };
+
 export default function Pending() {
   const [items, setItems] = useState<PendingItem[] | null>(null);
   const [logs, setLogs] = useState<ActionLog[] | null>(null);
   const [rule, setRule] = useState<CleanupRule | null>(null);
   const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<MarkPassResult | null>(null);
+  const [running, setRunning] = useState<"mark" | "delete" | "cycle" | "delete-now" | null>(null);
+  const [result, setResult] = useState<AnyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadAll = async () => {
@@ -45,19 +58,66 @@ export default function Pending() {
     loadAll();
   }, []);
 
-  const handleRun = async () => {
-    setRunning(true);
+  const handleMark = async () => {
+    setRunning("mark");
     setError(null);
     setResult(null);
     try {
       const r = await api.runMarkPass();
-      setResult(r);
+      setResult({ kind: "mark", data: r });
       if (!r.success) setError(r.error_message);
       await loadAll();
     } catch (e) {
       setError(String(e));
     } finally {
-      setRunning(false);
+      setRunning(null);
+    }
+  };
+
+  const handleDeletePass = async () => {
+    if (!rule) return;
+    if (!rule.dry_run) {
+      const ok = window.confirm(
+        "🔴 MODE LIVE actif.\n\nLe delete pass va RÉELLEMENT supprimer tous les items dont " +
+          "le délai est dépassé (Radarr/Sonarr + Jellyseerr).\n\nContinuer ?",
+      );
+      if (!ok) return;
+    }
+    setRunning("delete");
+    setError(null);
+    setResult(null);
+    try {
+      const r = await api.runDeletePass();
+      setResult({ kind: "delete", data: r });
+      await loadAll();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRunning(null);
+    }
+  };
+
+  const handleFullCycle = async () => {
+    if (!rule) return;
+    if (!rule.dry_run) {
+      const ok = window.confirm(
+        "🔴 MODE LIVE actif.\n\nLe cycle complet va sync + mark + DELETE des items expirés. " +
+          "Réel.\n\nContinuer ?",
+      );
+      if (!ok) return;
+    }
+    setRunning("cycle");
+    setError(null);
+    setResult(null);
+    try {
+      const r = await api.runFullCycle();
+      setResult({ kind: "cycle", data: r });
+      if (!r.success && r.error_message) setError(r.error_message);
+      await loadAll();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRunning(null);
     }
   };
 
@@ -70,28 +130,68 @@ export default function Pending() {
     }
   };
 
+  const handleDeleteNow = async (jellyfinId: string, name: string) => {
+    if (!rule) return;
+    if (!rule.dry_run) {
+      const ok = window.confirm(
+        `🔴 MODE LIVE — Supprimer "${name}" maintenant ?\n\nLe fichier sera supprimé via ` +
+          "Radarr/Sonarr (definitivement). La demande Jellyseerr sera nettoyée.",
+      );
+      if (!ok) return;
+    }
+    setRunning("delete-now");
+    try {
+      const r = await api.deleteNow(jellyfinId);
+      setResult({ kind: "delete", data: r });
+      await loadAll();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRunning(null);
+    }
+  };
+
   const totalSize = (items ?? []).reduce((s, i) => s + (i.file_size_bytes || 0), 0);
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <div className="flex items-start justify-between gap-4">
-        <div>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex-1 min-w-0">
           <h1 className="text-3xl font-bold">À nettoyer</h1>
           <p className="text-slate-400 mt-2">
-            Items actuellement marqués pour suppression future. Ils sont dans la Collection
-            Jellyfin <strong>"Bientôt supprimé"</strong>. <span className="text-amber-400">
-              Aucune suppression réelle pour l'instant
-            </span>{" "}
-            — c'est l'objet du Sprint 4B.
+            Items dans la Collection Jellyfin <strong>"Bientôt supprimé"</strong>, en attente
+            de leur échéance. {rule?.dry_run ? (
+              <span className="text-emerald-400">DRY-RUN actif — rien ne sera réellement supprimé.</span>
+            ) : (
+              <span className="text-red-400 font-semibold">🔴 MODE LIVE — les suppressions sont réelles.</span>
+            )}
           </p>
         </div>
-        <button
-          onClick={handleRun}
-          disabled={running}
-          className="px-4 py-2 bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white text-sm font-medium rounded-md transition whitespace-nowrap"
-        >
-          {running ? "En cours…" : "🔄 Lancer un mark pass"}
-        </button>
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={handleMark}
+            disabled={!!running}
+            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-sm font-medium rounded-md transition whitespace-nowrap"
+          >
+            {running === "mark" ? "Mark…" : "🏷️ Mark pass"}
+          </button>
+          <button
+            onClick={handleDeletePass}
+            disabled={!!running}
+            className={`px-3 py-2 disabled:opacity-50 text-white text-sm font-medium rounded-md transition whitespace-nowrap ${
+              rule?.dry_run ? "bg-slate-800 hover:bg-slate-700" : "bg-red-700 hover:bg-red-600"
+            }`}
+          >
+            {running === "delete" ? "Delete…" : "🗑️ Delete pass"}
+          </button>
+          <button
+            onClick={handleFullCycle}
+            disabled={!!running}
+            className="px-3 py-2 bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white text-sm font-medium rounded-md transition whitespace-nowrap"
+          >
+            {running === "cycle" ? "Cycle…" : "▶ Cycle complet"}
+          </button>
+        </div>
       </div>
 
       {rule && !rule.enabled && (
@@ -109,18 +209,80 @@ export default function Pending() {
         </div>
       )}
 
-      {result && result.success && result.rule_enabled && (
+      {result?.kind === "mark" && result.data.success && result.data.rule_enabled && (
         <div className="rounded-md border border-emerald-900/50 bg-emerald-950/40 p-3 text-sm text-emerald-300">
-          ✓ Mark pass OK en {result.duration_seconds}s — {result.candidates_total} candidats
-          identifiés, +{result.newly_marked} nouveaux marqués, −
-          {result.unmarked_no_longer_matching} démarqués (ne matchent plus). Collection : {result.items_in_collection_after} items.
+          ✓ Mark pass OK en {result.data.duration_seconds}s — {result.data.candidates_total}{" "}
+          candidats identifiés, +{result.data.newly_marked} nouveaux marqués, −
+          {result.data.unmarked_no_longer_matching} démarqués. Collection :{" "}
+          {result.data.items_in_collection_after} items.
         </div>
       )}
 
-      {result && !result.rule_enabled && (
+      {result?.kind === "mark" && !result.data.rule_enabled && (
         <div className="rounded-md border border-amber-900/50 bg-amber-950/30 p-3 text-sm text-amber-200">
-          ⚠ {result.candidates_total} candidats matcheraient la règle, mais elle est désactivée
-          — aucun n'a été marqué. Active la règle dans <Link to="/rules" className="underline">Règles</Link> pour appliquer.
+          ⚠ {result.data.candidates_total} candidats matcheraient la règle, mais elle est
+          désactivée. Va l'activer dans <Link to="/rules" className="underline">Règles</Link>.
+        </div>
+      )}
+
+      {result?.kind === "delete" && (
+        <div
+          className={`rounded-md border p-3 text-sm ${
+            result.data.dry_run
+              ? "border-emerald-900/50 bg-emerald-950/40 text-emerald-300"
+              : "border-red-700/60 bg-red-950/40 text-red-200"
+          }`}
+        >
+          {result.data.dry_run
+            ? `✓ DRY-RUN delete pass en ${result.data.duration_seconds}s — ${result.data.deleted_count} item${
+                result.data.deleted_count > 1 ? "s" : ""
+              } AURAIENT été supprimés (rien n'a bougé), ${result.data.failed_count} en échec.`
+            : `🔴 LIVE delete pass en ${result.data.duration_seconds}s — ${result.data.deleted_count} supprimé${
+                result.data.deleted_count > 1 ? "s" : ""
+              }, ${result.data.failed_count} en échec.`}
+          {result.data.errors.length > 0 && (
+            <ul className="mt-2 text-xs space-y-0.5">
+              {result.data.errors.map((e) => (
+                <li key={e}>• {e}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {result?.kind === "cycle" && (
+        <div
+          className={`rounded-md border p-3 text-sm space-y-1 ${
+            result.data.success
+              ? "border-emerald-900/50 bg-emerald-950/40 text-emerald-300"
+              : "border-amber-900/50 bg-amber-950/30 text-amber-200"
+          }`}
+        >
+          <div className="font-semibold">
+            ▶ Cycle complet terminé en {result.data.duration_seconds}s
+          </div>
+          {result.data.sync && (
+            <div className="text-xs opacity-90">
+              · Sync : {result.data.sync.movies} films, {result.data.sync.series} séries
+              ({result.data.sync.duration_seconds}s)
+            </div>
+          )}
+          {result.data.mark_pass && (
+            <div className="text-xs opacity-90">
+              · Mark : +{result.data.mark_pass.newly_marked} marqués, −
+              {result.data.mark_pass.unmarked_no_longer_matching} démarqués
+            </div>
+          )}
+          {result.data.delete_pass && (
+            <div className="text-xs opacity-90">
+              · Delete ({result.data.delete_pass.dry_run ? "dry-run" : "LIVE"}) :{" "}
+              {result.data.delete_pass.deleted_count} traités,{" "}
+              {result.data.delete_pass.failed_count} en échec
+            </div>
+          )}
+          {result.data.error_message && (
+            <div className="text-xs">⚠ {result.data.error_message}</div>
+          )}
         </div>
       )}
 
@@ -197,12 +359,32 @@ export default function Pending() {
                         {formatBytes(it.file_size_bytes)}
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <button
-                          onClick={() => handleRestore(it.jellyfin_id)}
-                          className="text-xs px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded transition"
-                        >
-                          ↩️ Restaurer
-                        </button>
+                        <div className="flex gap-1 justify-end">
+                          <button
+                            onClick={() => handleRestore(it.jellyfin_id)}
+                            disabled={!!running}
+                            className="text-xs px-2 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-200 rounded transition"
+                            title="Retirer de la liste à supprimer"
+                          >
+                            ↩️ Restaurer
+                          </button>
+                          <button
+                            onClick={() => handleDeleteNow(it.jellyfin_id, it.name)}
+                            disabled={!!running}
+                            className={`text-xs px-2 py-1 disabled:opacity-30 text-white rounded transition ${
+                              rule?.dry_run
+                                ? "bg-slate-800 hover:bg-slate-700"
+                                : "bg-red-700 hover:bg-red-600"
+                            }`}
+                            title={
+                              rule?.dry_run
+                                ? "Supprimer maintenant (DRY-RUN — simulé)"
+                                : "Supprimer maintenant (RÉEL)"
+                            }
+                          >
+                            🗑 Supprimer
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

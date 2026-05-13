@@ -157,6 +157,8 @@ async def preview_scan(db: AsyncSession) -> ScanPreview:
                 last_played_by=item.last_played_by,
                 radarr_id=item.radarr_id,
                 sonarr_id=item.sonarr_id,
+                tmdb_id=item.tmdb_id,
+                tvdb_id=item.tvdb_id,
                 series_status=item.series_status,
                 reasons=reasons,
                 deletable=deletable,

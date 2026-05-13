@@ -6,8 +6,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ActionLog, PendingItem
 from app.db.session import get_session
-from app.schemas import ActionLogRead, MarkPassResult, PendingItemRead
-from app.services.cleanup import restore_pending, run_mark_pass
+from app.schemas import (
+    ActionLogRead,
+    DeletePassResult,
+    FullCycleResult,
+    MarkPassResult,
+    PendingItemRead,
+)
+from app.services.cleanup import (
+    restore_pending,
+    run_delete_pass,
+    run_full_cycle,
+    run_mark_pass,
+)
 
 router = APIRouter(prefix="/cleanup", tags=["cleanup"])
 
@@ -15,6 +26,27 @@ router = APIRouter(prefix="/cleanup", tags=["cleanup"])
 @router.post("/mark-pass", response_model=MarkPassResult)
 async def mark_pass(db: AsyncSession = Depends(get_session)):
     return await run_mark_pass(db)
+
+
+@router.post("/delete-pass", response_model=DeletePassResult)
+async def delete_pass(db: AsyncSession = Depends(get_session)):
+    """Delete all pending items whose grace period has elapsed. Respects dry_run."""
+    return await run_delete_pass(db)
+
+
+@router.post("/full-cycle", response_model=FullCycleResult)
+async def full_cycle(db: AsyncSession = Depends(get_session)):
+    """Sync library + mark pass + delete pass — what the scheduler does, on demand."""
+    return await run_full_cycle(db)
+
+
+@router.post("/pending/{jellyfin_id}/delete-now", response_model=DeletePassResult)
+async def delete_now(jellyfin_id: str, db: AsyncSession = Depends(get_session)):
+    """Force-delete one item, bypassing the grace period. Still respects dry_run."""
+    pending = await db.get(PendingItem, jellyfin_id)
+    if pending is None:
+        raise HTTPException(status_code=404, detail="Item non trouvé dans la liste pending")
+    return await run_delete_pass(db, force_jellyfin_ids=[jellyfin_id])
 
 
 @router.get("/pending", response_model=list[PendingItemRead])

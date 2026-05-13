@@ -28,3 +28,25 @@ class RadarrClient(BaseClient):
     async def list_movies(self) -> list[dict[str, Any]]:
         """All movies known to Radarr (whether file-present or just monitored)."""
         return await self.get(f"/api/{self.api_version}/movie")
+
+    async def delete_movie(
+        self,
+        movie_id: int,
+        delete_files: bool = True,
+        add_import_exclusion: bool = False,
+    ) -> None:
+        """Delete a movie and (by default) its files.
+
+        IMPORTANT: add_import_exclusion is forced to False by default. If True,
+        Radarr blocklists this movie permanently — Jellyseerr re-requests would
+        be silently rejected. Always keep this False for a Jellyseerr-friendly flow.
+        """
+        async with self._client() as c:
+            resp = await c.delete(
+                f"/api/{self.api_version}/movie/{movie_id}",
+                params={
+                    "deleteFiles": "true" if delete_files else "false",
+                    "addImportExclusion": "true" if add_import_exclusion else "false",
+                },
+            )
+            resp.raise_for_status()
