@@ -448,6 +448,31 @@ async def _delete_one(
         )
         return True, None
 
+    # Prefer DELETE /media/{id} — it resets the availability state and cascades
+    # to the request. Falling back to DELETE /request/{id} only removes the user
+    # request but leaves the media as Available, which is the bug the user hit.
+    media_id = (req.get("media") or {}).get("id")
+
+    if media_id:
+        try:
+            await jellyseerr.delete_media(media_id)
+            await _log(
+                db,
+                action="jellyseerr-media-deleted",
+                jellyfin_id=pending.jellyfin_id,
+                name=pending.name,
+                details=f"media id {media_id} (request id {req['id']} supprimé en cascade)",
+            )
+            return True, None
+        except Exception as exc:
+            log.warning(
+                "Jellyseerr delete_media failed for %s (media_id=%s), trying delete_request fallback: %s",
+                pending.name, media_id, exc,
+            )
+
+    # Fallback path — works for request-only data, leaves the media Available
+    # so the user might still see it as such in Jellyseerr (a Jellyfin rescan
+    # will eventually fix it).
     try:
         await jellyseerr.delete_request(req["id"])
         await _log(
@@ -455,10 +480,13 @@ async def _delete_one(
             action="jellyseerr-request-deleted",
             jellyfin_id=pending.jellyfin_id,
             name=pending.name,
-            details=f"request id {req['id']}",
+            details=(
+                f"request id {req['id']} — fallback (delete_media a échoué ou pas d'id media). "
+                "Le statut 'Available' restera peut-être en cache jusqu'au prochain scan Jellyseerr."
+            ),
         )
     except Exception as exc:
-        log.warning("Jellyseerr delete failed for %s: %s", pending.name, exc)
+        log.warning("Jellyseerr delete_request failed for %s: %s", pending.name, exc)
         await _log(
             db,
             action="jellyseerr-cleanup-failed",

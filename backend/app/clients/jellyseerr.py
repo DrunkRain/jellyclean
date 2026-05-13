@@ -79,3 +79,16 @@ class JellyseerrClient(BaseClient):
         async with self._client() as c:
             resp = await c.delete(f"/api/v1/request/{request_id}")
             resp.raise_for_status()
+
+    async def delete_media(self, media_id: int) -> None:
+        """Remove a media entry from Jellyseerr.
+
+        IMPORTANT: this is the call that actually resets a media's availability
+        state in Jellyseerr — deleting only the Request leaves the Media object
+        with status='Available', so the user keeps seeing the title as available
+        and never gets a 'Request' button to re-add it. Deleting the Media also
+        cascades to its Requests, so we don't need to delete those separately.
+        """
+        async with self._client() as c:
+            resp = await c.delete(f"/api/v1/media/{media_id}")
+            resp.raise_for_status()
