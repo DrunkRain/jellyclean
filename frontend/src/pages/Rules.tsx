@@ -80,6 +80,33 @@ export default function Rules() {
         </p>
       </div>
 
+      <div
+        className={`rounded-lg border p-4 ${
+          draft.enabled
+            ? "border-emerald-900/50 bg-emerald-950/30"
+            : "border-amber-900/50 bg-amber-950/30"
+        }`}
+      >
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            className="w-5 h-5 mt-0.5 accent-brand-500"
+            checked={draft.enabled}
+            onChange={(e) => set("enabled", e.target.checked)}
+          />
+          <div className="flex-1">
+            <div className="font-semibold">
+              {draft.enabled ? "🟢 Règle active" : "⚪ Règle désactivée"}
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              {draft.enabled
+                ? "Le mark pass va effectivement marquer/démarquer les items dans la Collection Jellyfin selon les seuils ci-dessous."
+                : "Tant que désactivée, le mark pass ne fait rien (par sécurité). Active-la quand tes seuils te conviennent."}
+            </p>
+          </div>
+        </label>
+      </div>
+
       {error && (
         <div className="rounded-md border border-red-900/50 bg-red-950/40 p-3 text-sm text-red-300 font-mono">
           {error}

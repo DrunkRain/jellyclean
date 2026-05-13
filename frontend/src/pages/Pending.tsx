@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, type ActionLog, type MarkPassResult, type PendingItem } from "../lib/api";
+import { Link } from "react-router-dom";
+import { api, type ActionLog, type CleanupRule, type MarkPassResult, type PendingItem } from "../lib/api";
 import { daysSince, formatBytes, formatRelative } from "../lib/format";
 
 const ACTION_LABELS: Record<string, { label: string; color: string }> = {
@@ -17,6 +18,7 @@ const ACTION_LABELS: Record<string, { label: string; color: string }> = {
 export default function Pending() {
   const [items, setItems] = useState<PendingItem[] | null>(null);
   const [logs, setLogs] = useState<ActionLog[] | null>(null);
+  const [rule, setRule] = useState<CleanupRule | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<MarkPassResult | null>(null);
@@ -24,9 +26,14 @@ export default function Pending() {
 
   const loadAll = async () => {
     try {
-      const [list, log] = await Promise.all([api.listPending(), api.actionLog(50)]);
+      const [list, log, r] = await Promise.all([
+        api.listPending(),
+        api.actionLog(50),
+        api.getRule(),
+      ]);
       setItems(list);
       setLogs(log);
+      setRule(r);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -87,11 +94,33 @@ export default function Pending() {
         </button>
       </div>
 
-      {result && result.success && (
+      {rule && !rule.enabled && (
+        <div className="rounded-md border border-amber-900/50 bg-amber-950/30 p-3 text-sm text-amber-200 flex items-center justify-between gap-4">
+          <span>
+            ⚠ La règle est <strong>désactivée</strong>. Le mark pass ne marquera rien tant que tu
+            ne l'as pas activée.
+          </span>
+          <Link
+            to="/rules"
+            className="text-xs px-3 py-1.5 bg-amber-900/40 hover:bg-amber-900/60 rounded border border-amber-700/40 whitespace-nowrap"
+          >
+            Aller activer la règle →
+          </Link>
+        </div>
+      )}
+
+      {result && result.success && result.rule_enabled && (
         <div className="rounded-md border border-emerald-900/50 bg-emerald-950/40 p-3 text-sm text-emerald-300">
           ✓ Mark pass OK en {result.duration_seconds}s — {result.candidates_total} candidats
           identifiés, +{result.newly_marked} nouveaux marqués, −
           {result.unmarked_no_longer_matching} démarqués (ne matchent plus). Collection : {result.items_in_collection_after} items.
+        </div>
+      )}
+
+      {result && !result.rule_enabled && (
+        <div className="rounded-md border border-amber-900/50 bg-amber-950/30 p-3 text-sm text-amber-200">
+          ⚠ {result.candidates_total} candidats matcheraient la règle, mais elle est désactivée
+          — aucun n'a été marqué. Active la règle dans <Link to="/rules" className="underline">Règles</Link> pour appliquer.
         </div>
       )}
 
