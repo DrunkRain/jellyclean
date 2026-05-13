@@ -68,6 +68,7 @@ class MediaItemRead(BaseModel):
     date_added: datetime | None = None
     file_path: str | None = None
     file_size_bytes: int | None = None
+    library_name: str | None = None
 
     series_status: str | None = None
 

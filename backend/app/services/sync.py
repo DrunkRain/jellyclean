@@ -111,8 +111,8 @@ async def run_sync(db: AsyncSession) -> SyncResult:
     jf = JellyfinClient(jf_cfg.base_url, jf_cfg.api_key)
 
     try:
-        users, movies, series_list = await asyncio.gather(
-            jf.list_users(), jf.list_movies(), jf.list_series()
+        users, movies, series_list, libraries = await asyncio.gather(
+            jf.list_users(), jf.list_movies(), jf.list_series(), jf.list_libraries()
         )
     except Exception as exc:
         msg = f"Échec du fetch Jellyfin : {exc.__class__.__name__}: {exc}"
@@ -123,7 +123,34 @@ async def run_sync(db: AsyncSession) -> SyncResult:
         await db.commit()
         return SyncResult(False, time.monotonic() - started, 0, 0, 0, 0, 0, msg)
 
-    log.info("Fetched %d users, %d movies, %d series from Jellyfin", len(users), len(movies), len(series_list))
+    log.info(
+        "Fetched %d users, %d movies, %d series, %d libraries from Jellyfin",
+        len(users), len(movies), len(series_list), len(libraries),
+    )
+
+    # Build a longest-prefix lookup: path → library name. Jellyfin libraries
+    # can have multiple Locations and overlapping paths (rare but possible —
+    # e.g. /media/movies and /media/movies/4k both registered), so we sort by
+    # length descending and pick the first match.
+    library_paths: list[tuple[str, str]] = []
+    for lib in libraries:
+        name = lib.get("Name") or ""
+        for loc in lib.get("Locations") or []:
+            if loc:
+                library_paths.append((loc.rstrip("/").rstrip("\\"), name))
+    library_paths.sort(key=lambda p: len(p[0]), reverse=True)
+
+    def _library_for_path(path: str | None) -> str | None:
+        if not path:
+            return None
+        normalised = path.rstrip("/").rstrip("\\")
+        for prefix, name in library_paths:
+            if normalised == prefix:
+                return name
+            # Match both / and \ as separators so Windows-stored paths work too
+            if normalised.startswith(prefix + "/") or normalised.startswith(prefix + "\\"):
+                return name
+        return None
 
     # Aggregate last-played per item across all users
     # Map: item_id -> {last_played_at, last_played_by, total_play_count}
@@ -240,6 +267,7 @@ async def run_sync(db: AsyncSession) -> SyncResult:
             date_added=_parse_jellyfin_date(m.get("DateCreated")),
             file_path=path,
             file_size_bytes=size,
+            library_name=_library_for_path(path),
             series_status=None,
             last_played_at=agg.get("last_played_at"),
             last_played_by=agg.get("last_played_by"),
@@ -277,6 +305,7 @@ async def run_sync(db: AsyncSession) -> SyncResult:
             date_added=_parse_jellyfin_date(s.get("DateCreated")),
             file_path=s.get("Path"),
             file_size_bytes=None,  # series-level file size requires episode aggregation — out of Sprint 2 scope
+            library_name=_library_for_path(s.get("Path")),
             series_status=series_status,
             last_played_at=agg.get("last_played_at"),
             last_played_by=agg.get("last_played_by"),

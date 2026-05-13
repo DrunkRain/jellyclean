@@ -73,6 +73,11 @@ class MediaItem(Base):
     file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
+    # Name of the Jellyfin library this item lives in (e.g. "Films", "Films 4K",
+    # "Séries", "Animation"). Resolved at sync time by longest-prefix path match
+    # against /Library/VirtualFolders.Locations. NULL when no library matched.
+    library_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+
     series_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     last_played_at: Mapped[datetime | None] = mapped_column(

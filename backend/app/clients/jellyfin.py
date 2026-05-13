@@ -35,6 +35,15 @@ class JellyfinClient(BaseClient):
         """All users on the server. Used to aggregate last-played across users."""
         return await self.get("/Users")
 
+    async def list_libraries(self) -> list[dict[str, Any]]:
+        """Configured libraries (VirtualFolders) with their root paths.
+
+        Each entry has Name, Locations (list of absolute paths), CollectionType.
+        Used at sync time to assign each MediaItem to its parent library by
+        longest-prefix path match.
+        """
+        return await self.get("/Library/VirtualFolders")
+
     async def list_movies(self) -> list[dict[str, Any]]:
         """Admin view of every Movie in the library, with provider IDs + media sources."""
         data = await self.get(

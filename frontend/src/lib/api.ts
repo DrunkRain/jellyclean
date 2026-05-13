@@ -57,6 +57,7 @@ export interface MediaItem {
   date_added: string | null;
   file_path: string | null;
   file_size_bytes: number | null;
+  library_name: string | null;
   series_status: SeriesStatus | null;
   last_played_at: string | null;
   last_played_by: string | null;

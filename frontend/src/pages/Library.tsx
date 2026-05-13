@@ -2,9 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type MediaItem, type SyncSummary } from "../lib/api";
 import { daysSince, formatBytes, formatRelative, matchDiagnostic } from "../lib/format";
 
-type SortKey = "name" | "date_added" | "last_played_at" | "file_size_bytes" | "media_type";
+type SortKey =
+  | "name"
+  | "date_added"
+  | "last_played_at"
+  | "file_size_bytes"
+  | "media_type"
+  | "library_name";
 type SortDir = "asc" | "desc";
-type TypeFilter = "all" | "movie" | "series";
 type WatchedFilter = "all" | "never" | "30" | "90" | "365";
 
 export default function Library() {
@@ -16,12 +21,22 @@ export default function Library() {
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [libraryFilter, setLibraryFilter] = useState<string>("all");
   const [watchedFilter, setWatchedFilter] = useState<WatchedFilter>("all");
   const [unmatchedOnly, setUnmatchedOnly] = useState(false);
   const [protectedOnly, setProtectedOnly] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  // Distinct library names found in the cached items, for the filter dropdown.
+  const availableLibraries = useMemo(() => {
+    if (!items) return [];
+    const set = new Set<string>();
+    for (const it of items) {
+      if (it.library_name) set.add(it.library_name);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "fr"));
+  }, [items]);
 
   useEffect(() => {
     Promise.all([api.listLibrary(), api.listProtections()])
@@ -74,7 +89,13 @@ export default function Library() {
     const q = search.trim().toLowerCase();
 
     let out = items.filter((it) => {
-      if (typeFilter !== "all" && it.media_type !== typeFilter) return false;
+      if (libraryFilter !== "all") {
+        if (libraryFilter === "__unassigned__") {
+          if (it.library_name) return false;
+        } else if (it.library_name !== libraryFilter) {
+          return false;
+        }
+      }
       if (q && !it.name.toLowerCase().includes(q)) return false;
 
       if (watchedFilter === "never" && it.last_played_at !== null) return false;
@@ -112,7 +133,7 @@ export default function Library() {
     });
 
     return out;
-  }, [items, search, typeFilter, watchedFilter, unmatchedOnly, protectedOnly, protectedIds, sortKey, sortDir]);
+  }, [items, search, libraryFilter, watchedFilter, unmatchedOnly, protectedOnly, protectedIds, sortKey, sortDir]);
 
   const totalSize = useMemo(
     () => filtered.reduce((sum, it) => sum + (it.file_size_bytes || 0), 0),
@@ -181,13 +202,17 @@ export default function Library() {
               className="flex-1 min-w-[200px] px-3 py-2 bg-slate-950 border border-slate-800 rounded-md text-sm focus:outline-none focus:border-brand-500"
             />
             <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value as TypeFilter)}
+              value={libraryFilter}
+              onChange={(e) => setLibraryFilter(e.target.value)}
               className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-md text-sm"
             >
-              <option value="all">Tous types</option>
-              <option value="movie">🎬 Films</option>
-              <option value="series">📺 Séries</option>
+              <option value="all">Toutes les bibliothèques</option>
+              {availableLibraries.map((lib) => (
+                <option key={lib} value={lib}>
+                  📁 {lib}
+                </option>
+              ))}
+              <option value="__unassigned__">⚠ Sans bibliothèque</option>
             </select>
             <select
               value={watchedFilter}
@@ -235,6 +260,9 @@ export default function Library() {
                   <Th onClick={() => onHeaderClick("name")} indicator={sortIndicator("name")}>
                     Nom
                   </Th>
+                  <Th onClick={() => onHeaderClick("library_name")} indicator={sortIndicator("library_name")}>
+                    Bibliothèque
+                  </Th>
                   <Th onClick={() => onHeaderClick("date_added")} indicator={sortIndicator("date_added")}>
                     Ajouté
                   </Th>
@@ -270,6 +298,13 @@ export default function Library() {
                             ? "⚪ Terminée"
                             : "?"}
                         </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">
+                      {it.library_name ? (
+                        <span>📁 {it.library_name}</span>
+                      ) : (
+                        <span className="text-amber-500">⚠ —</span>
                       )}
                     </td>
                     <td className="px-3 py-2 text-slate-400 whitespace-nowrap">
