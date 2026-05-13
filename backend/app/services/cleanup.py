@@ -28,6 +28,7 @@ from app.clients.radarr import RadarrClient
 from app.clients.sonarr import SonarrClient
 from app.db.models import (
     ActionLog,
+    MediaItem,
     MediaType,
     PendingItem,
     ServiceConfig,
@@ -379,33 +380,93 @@ async def _delete_one(
         details=f"{'Radarr' if is_movie else 'Sonarr'} id={target_id}, files supprimés",
     )
 
-    # Best-effort Jellyseerr request cleanup
-    if jellyseerr and (pending.tmdb_id or pending.tvdb_id):
-        try:
-            req = await jellyseerr.find_request_for_media(
-                "movie" if is_movie else "tv",
-                tmdb_id=pending.tmdb_id,
-                tvdb_id=pending.tvdb_id,
-            )
-            if req:
-                await jellyseerr.delete_request(req["id"])
-                await _log(
-                    db,
-                    action="jellyseerr-request-deleted",
-                    jellyfin_id=pending.jellyfin_id,
-                    name=pending.name,
-                    details=f"request id {req['id']}",
+    # ===== Jellyseerr request cleanup =====
+    # Best-effort: never fail the deletion just because Jellyseerr was unhappy.
+    if jellyseerr is None:
+        await _log(
+            db,
+            action="jellyseerr-skipped",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            details="Jellyseerr non configuré ou désactivé — cleanup ignoré.",
+        )
+        return True, None
+
+    # Backfill provider IDs from the MediaItem cache if the pending row predates
+    # Sprint 4B (it would have tmdb_id=None / tvdb_id=None).
+    tmdb = pending.tmdb_id
+    tvdb = pending.tvdb_id
+    if not tmdb and not tvdb:
+        media = await db.get(MediaItem, pending.jellyfin_id)
+        if media:
+            tmdb = media.tmdb_id
+            tvdb = media.tvdb_id
+            if tmdb or tvdb:
+                log.info(
+                    "Backfilled provider IDs for %s from MediaItem cache (tmdb=%s tvdb=%s)",
+                    pending.name, tmdb, tvdb,
                 )
-        except Exception as exc:
-            log.warning("Jellyseerr cleanup failed for %s: %s", pending.name, exc)
-            await _log(
-                db,
-                action="jellyseerr-cleanup-failed",
-                jellyfin_id=pending.jellyfin_id,
-                name=pending.name,
-                success=False,
-                error=str(exc),
-            )
+
+    if not tmdb and not tvdb:
+        await _log(
+            db,
+            action="jellyseerr-skipped",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            details="Aucun ID TMDB/TVDB trouvé pour cet item — impossible de retrouver la demande Jellyseerr.",
+        )
+        return True, None
+
+    try:
+        req = await jellyseerr.find_request_for_media(
+            "movie" if is_movie else "tv",
+            tmdb_id=tmdb,
+            tvdb_id=tvdb,
+        )
+    except Exception as exc:
+        log.warning("Jellyseerr lookup failed for %s: %s", pending.name, exc)
+        await _log(
+            db,
+            action="jellyseerr-cleanup-failed",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            success=False,
+            error=f"Lookup: {exc.__class__.__name__}: {exc}",
+        )
+        return True, None
+
+    if req is None:
+        await _log(
+            db,
+            action="jellyseerr-skipped",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            details=(
+                f"Aucune demande Jellyseerr trouvée pour {'TMDB' if is_movie else 'TVDB'}="
+                f"{tmdb if is_movie else tvdb} — l'item n'a peut-être pas été ajouté via Jellyseerr."
+            ),
+        )
+        return True, None
+
+    try:
+        await jellyseerr.delete_request(req["id"])
+        await _log(
+            db,
+            action="jellyseerr-request-deleted",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            details=f"request id {req['id']}",
+        )
+    except Exception as exc:
+        log.warning("Jellyseerr delete failed for %s: %s", pending.name, exc)
+        await _log(
+            db,
+            action="jellyseerr-cleanup-failed",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            success=False,
+            error=f"Delete: {exc.__class__.__name__}: {exc}",
+        )
 
     return True, None
 

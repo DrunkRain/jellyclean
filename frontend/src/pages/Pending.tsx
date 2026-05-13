@@ -21,6 +21,9 @@ const ACTION_LABELS: Record<string, { label: string; color: string }> = {
   "would-delete": { label: "Aurait supprimé (dry-run)", color: "text-amber-400" },
   deleted: { label: "Supprimé", color: "text-red-400" },
   "delete-failed": { label: "Échec suppression", color: "text-red-500" },
+  "jellyseerr-request-deleted": { label: "Demande Jellyseerr supprimée", color: "text-emerald-400" },
+  "jellyseerr-skipped": { label: "Cleanup Jellyseerr ignoré", color: "text-slate-500" },
+  "jellyseerr-cleanup-failed": { label: "Échec cleanup Jellyseerr", color: "text-amber-500" },
 };
 
 type AnyResult =
