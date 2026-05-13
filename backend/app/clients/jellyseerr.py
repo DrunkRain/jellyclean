@@ -1,5 +1,7 @@
 from typing import Any
 
+import httpx
+
 from app.clients.base import BaseClient, TestResult, classify_error
 
 
@@ -23,57 +25,39 @@ class JellyseerrClient(BaseClient):
             details={"version": version, "commit_tag": data.get("commitTag")},
         )
 
-    async def list_all_requests(self) -> list[dict[str, Any]]:
-        """Paginate through all Jellyseerr requests. Used to find the request
-        that originally brought a media into the library so we can clean it up
-        when the media is deleted (otherwise Jellyseerr keeps thinking the
-        media is 'available' and the user can't cleanly re-request it)."""
-        out: list[dict[str, Any]] = []
-        skip = 0
-        page_size = 100
-        # Jellyseerr API uses ?take=&skip=. We cap at 50 pages = 5000 requests
-        # (way more than any real homelab will have).
-        for _ in range(50):
-            data = await self.get(
-                "/api/v1/request",
-                params={"take": page_size, "skip": skip, "filter": "all", "sort": "added"},
-            )
-            page = data.get("results", [])
-            if not page:
-                break
-            out.extend(page)
-            if len(page) < page_size:
-                break
-            skip += page_size
-        return out
-
-    async def find_request_for_media(
+    async def find_media_info(
         self,
         media_type: str,  # "movie" or "tv"
         tmdb_id: str | None = None,
-        tvdb_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Locate the Jellyseerr request that brought this media in. Matches
-        on tmdbId for movies, tvdbId for series. Returns the most recent matching
-        request (by id descending) or None."""
-        if not tmdb_id and not tvdb_id:
+        """Direct lookup of the Jellyseerr media entry by TMDB ID.
+
+        Jellyseerr's /movie/{tmdbId} and /tv/{tmdbId} endpoints always return
+        the title's TMDB data; they additionally return a `mediaInfo` block
+        ONLY when Jellyseerr already tracks that title (requested or imported
+        from Jellyfin). That mediaInfo.id is what we feed to delete_media.
+
+        Returns the mediaInfo dict (with .id, .status, etc.) or None if
+        Jellyseerr has no record of this title.
+
+        We use TMDB ID exclusively here because Jellyseerr keys both movies and
+        series by TMDB internally — TVDB is stored but not used as a primary
+        lookup key on these endpoints.
+        """
+        if not tmdb_id:
             return None
 
-        all_requests = await self.list_all_requests()
-        matches: list[dict[str, Any]] = []
-        for req in all_requests:
-            media = req.get("media") or {}
-            if media.get("mediaType") != media_type:
-                continue
-            if media_type == "movie" and tmdb_id and str(media.get("tmdbId")) == str(tmdb_id):
-                matches.append(req)
-            elif media_type == "tv" and tvdb_id and str(media.get("tvdbId")) == str(tvdb_id):
-                matches.append(req)
+        path = f"/api/v1/movie/{tmdb_id}" if media_type == "movie" else f"/api/v1/tv/{tmdb_id}"
+        try:
+            data = await self.get(path)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise
 
-        if not matches:
-            return None
-        matches.sort(key=lambda r: r.get("id", 0), reverse=True)
-        return matches[0]
+        media_info = data.get("mediaInfo")
+        # When mediaInfo is absent / null, Jellyseerr doesn't track this title.
+        return media_info if isinstance(media_info, dict) else None
 
     async def delete_request(self, request_id: int) -> None:
         async with self._client() as c:

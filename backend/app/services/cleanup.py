@@ -380,7 +380,7 @@ async def _delete_one(
         details=f"{'Radarr' if is_movie else 'Sonarr'} id={target_id}, files supprimés",
     )
 
-    # ===== Jellyseerr request cleanup =====
+    # ===== Jellyseerr cleanup =====
     # Best-effort: never fail the deletion just because Jellyseerr was unhappy.
     if jellyseerr is None:
         await _log(
@@ -395,105 +395,89 @@ async def _delete_one(
     # Backfill provider IDs from the MediaItem cache if the pending row predates
     # Sprint 4B (it would have tmdb_id=None / tvdb_id=None).
     tmdb = pending.tmdb_id
-    tvdb = pending.tvdb_id
-    if not tmdb and not tvdb:
+    if not tmdb:
         media = await db.get(MediaItem, pending.jellyfin_id)
-        if media:
+        if media and media.tmdb_id:
             tmdb = media.tmdb_id
-            tvdb = media.tvdb_id
-            if tmdb or tvdb:
-                log.info(
-                    "Backfilled provider IDs for %s from MediaItem cache (tmdb=%s tvdb=%s)",
-                    pending.name, tmdb, tvdb,
-                )
+            log.info("Backfilled tmdb_id=%s for %s from MediaItem cache", tmdb, pending.name)
 
-    if not tmdb and not tvdb:
-        await _log(
-            db,
-            action="jellyseerr-skipped",
-            jellyfin_id=pending.jellyfin_id,
-            name=pending.name,
-            details="Aucun ID TMDB/TVDB trouvé pour cet item — impossible de retrouver la demande Jellyseerr.",
-        )
-        return True, None
-
-    try:
-        req = await jellyseerr.find_request_for_media(
-            "movie" if is_movie else "tv",
-            tmdb_id=tmdb,
-            tvdb_id=tvdb,
-        )
-    except Exception as exc:
-        log.warning("Jellyseerr lookup failed for %s: %s", pending.name, exc)
-        await _log(
-            db,
-            action="jellyseerr-cleanup-failed",
-            jellyfin_id=pending.jellyfin_id,
-            name=pending.name,
-            success=False,
-            error=f"Lookup: {exc.__class__.__name__}: {exc}",
-        )
-        return True, None
-
-    if req is None:
+    # Jellyseerr keys both movies and series by TMDB internally; we only need that.
+    if not tmdb:
         await _log(
             db,
             action="jellyseerr-skipped",
             jellyfin_id=pending.jellyfin_id,
             name=pending.name,
             details=(
-                f"Aucune demande Jellyseerr trouvée pour {'TMDB' if is_movie else 'TVDB'}="
-                f"{tmdb if is_movie else tvdb} — l'item n'a peut-être pas été ajouté via Jellyseerr."
+                "Pas d'ID TMDB pour cet item — Jellyseerr utilise TMDB comme clé primaire. "
+                "Vérifie l'identification dans Jellyfin (⋮ → Identifier)."
             ),
         )
         return True, None
 
-    # Prefer DELETE /media/{id} — it resets the availability state and cascades
-    # to the request. Falling back to DELETE /request/{id} only removes the user
-    # request but leaves the media as Available, which is the bug the user hit.
-    media_id = (req.get("media") or {}).get("id")
-
-    if media_id:
-        try:
-            await jellyseerr.delete_media(media_id)
-            await _log(
-                db,
-                action="jellyseerr-media-deleted",
-                jellyfin_id=pending.jellyfin_id,
-                name=pending.name,
-                details=f"media id {media_id} (request id {req['id']} supprimé en cascade)",
-            )
-            return True, None
-        except Exception as exc:
-            log.warning(
-                "Jellyseerr delete_media failed for %s (media_id=%s), trying delete_request fallback: %s",
-                pending.name, media_id, exc,
-            )
-
-    # Fallback path — works for request-only data, leaves the media Available
-    # so the user might still see it as such in Jellyseerr (a Jellyfin rescan
-    # will eventually fix it).
+    # Direct lookup: GET /movie/{tmdbId} or /tv/{tmdbId} → mediaInfo block
     try:
-        await jellyseerr.delete_request(req["id"])
-        await _log(
-            db,
-            action="jellyseerr-request-deleted",
-            jellyfin_id=pending.jellyfin_id,
-            name=pending.name,
-            details=(
-                f"request id {req['id']} — fallback (delete_media a échoué ou pas d'id media). "
-                "Le statut 'Available' restera peut-être en cache jusqu'au prochain scan Jellyseerr."
-            ),
+        media_info = await jellyseerr.find_media_info(
+            "movie" if is_movie else "tv", tmdb_id=tmdb,
         )
     except Exception as exc:
-        log.warning("Jellyseerr delete_request failed for %s: %s", pending.name, exc)
+        log.warning("Jellyseerr media lookup failed for %s: %s", pending.name, exc)
         await _log(
             db,
             action="jellyseerr-cleanup-failed",
             jellyfin_id=pending.jellyfin_id,
             name=pending.name,
             success=False,
-            error=f"Delete: {exc.__class__.__name__}: {exc}",
+            error=f"Lookup TMDB={tmdb}: {exc.__class__.__name__}: {exc}",
+        )
+        return True, None
+
+    if media_info is None:
+        await _log(
+            db,
+            action="jellyseerr-skipped",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            details=(
+                f"Jellyseerr ne connaît pas TMDB={tmdb} — pas de cleanup nécessaire "
+                "(probablement jamais ajouté via Jellyseerr)."
+            ),
+        )
+        return True, None
+
+    media_id = media_info.get("id")
+    if not media_id:
+        await _log(
+            db,
+            action="jellyseerr-cleanup-failed",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            success=False,
+            error=f"mediaInfo retourné sans id pour TMDB={tmdb} (Jellyseerr API inattendue).",
+        )
+        return True, None
+
+    try:
+        await jellyseerr.delete_media(media_id)
+        await _log(
+            db,
+            action="jellyseerr-media-deleted",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            details=f"media id {media_id} (TMDB={tmdb}) — requests supprimés en cascade",
+        )
+    except Exception as exc:
+        log.warning(
+            "Jellyseerr delete_media failed for %s (media_id=%s): %s",
+            pending.name, media_id, exc,
+        )
+        await _log(
+            db,
+            action="jellyseerr-cleanup-failed",
+            jellyfin_id=pending.jellyfin_id,
+            name=pending.name,
+            success=False,
+            error=f"Delete media id={media_id}: {exc.__class__.__name__}: {exc}",
         )
 
     return True, None
