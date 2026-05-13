@@ -140,6 +140,18 @@ async def run_sync(db: AsyncSession) -> SyncResult:
                 library_paths.append((loc.rstrip("/").rstrip("\\"), name))
     library_paths.sort(key=lambda p: len(p[0]), reverse=True)
 
+    if not library_paths:
+        log.warning(
+            "Jellyfin returned %d libraries but no usable Locations — every item will be flagged "
+            "as 'Sans bibliothèque'. Check that the API key has admin permissions.",
+            len(libraries),
+        )
+    else:
+        log.info(
+            "Library path matcher: %s",
+            ", ".join(f"{p[1]!r} ⇐ {p[0]!r}" for p in library_paths[:10]),
+        )
+
     def _library_for_path(path: str | None) -> str | None:
         if not path:
             return None
