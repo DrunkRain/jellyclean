@@ -48,21 +48,21 @@ Un serveur Jellyfin se remplit avec le temps de médias que **personne ne regard
 - Diagnostic clair sur les items non supprimables (IDs Jellyfin manquants vs. inconnu de Radarr/Sonarr)
 
 ### Cleanup
-- Création/synchronisation auto d'une **Collection Jellyfin "Bientôt supprimé"** (lazy, chunkée pour éviter HTTP 414)
+- Création/synchronisation automatique d'une **Collection Jellyfin "Bientôt supprimé"**
 - Compte à rebours par item (J−14 → J−0) selon ton délai de grâce configuré
-- **Mode DRY-RUN par défaut** — bannière rouge sticky quand tu passes en LIVE
+- **Mode DRY-RUN par défaut** — bannière rouge persistante quand tu passes en LIVE
 - Confirmation obligatoire à chaque action destructrice en LIVE
 - Boutons par item : **↩️ Restaurer** / **🗑 Supprimer maintenant**
-- Suppression effective via Radarr `DELETE /movie?deleteFiles=true&addImportExclusion=false` (idem Sonarr)
-- Cleanup automatique de la **media entry Jellyseerr** (et non juste la request — c'est le piège classique)
+- Suppression effective via Radarr/Sonarr (le fichier est supprimé du disque)
+- Cleanup automatique de la **fiche Jellyseerr** correspondante, pour que tu puisses re-demander le média plus tard sans état "Available" résiduel
 
 ### Scheduler
 - Cycle complet automatique quotidien à l'heure configurée (UTC)
 - Pipeline : sync → mark → delete
 
 ### Audit
-- **Journal d'activité** persistant en DB : chaque action loggée avec timestamp, item, détails, succès/échec
-- Endpoint `/api/library/diagnose` pour debugger la résolution des bibliothèques
+- **Journal d'activité** persistant : chaque action loggée avec timestamp, item, détails, succès/échec
+- Endpoint de diagnostic intégré pour vérifier la résolution des bibliothèques
 
 ## 🚀 Déploiement
 
@@ -76,10 +76,7 @@ Un serveur Jellyfin se remplit avec le temps de médias que **personne ne regard
 | Repository reference | `refs/heads/main` |
 | Compose path | `docker-compose.yml` |
 
-→ **Deploy the stack**. L'image est pré-buildée sur GHCR.
-
-> ⚠️ **Premier déploiement** : il faut rendre l'image GHCR **publique** une fois la première build CI terminée :
-> https://github.com/users/DrunkRain/packages/container/jellyclean/settings → Change visibility → Public
+→ **Deploy the stack**. L'image est pré-buildée et publique sur GHCR, le pull est instantané.
 
 Une fois lancé, ouvre `http://<ip-serveur>:8095` dans ton navigateur.
 
@@ -132,8 +129,6 @@ JellyClean force ce paramètre à `false` quand il appelle Radarr/Sonarr. Consé
 
 Du coup, dans 6 mois si tu veux re-regarder le film : tu vas sur Jellyseerr, **bouton Request** apparaît, ça redemande à Radarr, ça re-télécharge. Aucun nettoyage manuel nécessaire.
 
-C'est cette UX qui rend JellyClean utile en pratique pour un homelab.
-
 ## 🛠️ Stack technique
 
 - **Backend** : Python 3.12 + FastAPI + SQLAlchemy 2.0 (async) + APScheduler
@@ -145,9 +140,9 @@ C'est cette UX qui rend JellyClean utile en pratique pour un homelab.
 ## 🐛 Troubleshooting
 
 ### "Site inaccessible" après déploiement
-- Vérifie que tu as activé **Re-pull image** dans Portainer après chaque mise à jour
-- L'image GHCR doit être **publique** (voir section Déploiement)
 - Le port `8095` doit être libre sur l'hôte (ou change-le dans `docker-compose.yml`)
+- Si tu viens de mettre à jour le stack : Portainer ne re-pull pas l'image par défaut. Pense à cocher **Re-pull image and redeploy** dans l'éditeur de stack.
+- Vérifie les logs du container : `docker logs jellyclean` doit montrer `Uvicorn running on http://0.0.0.0:8095`
 
 ### "Sans bibliothèque" sur tous les items
 Va sur `http://<ip>:8095/api/library/diagnose` — le JSON te dira ce que Jellyfin renvoie et ce que JellyClean en fait. Cause typique : clé API Jellyfin sans permissions admin.
@@ -169,5 +164,5 @@ MIT — voir [LICENSE](./LICENSE).
 
 ## 🙏 Inspirations
 
-- [Maintainerr](https://github.com/jorenn92/Maintainerr) — l'équivalent côté Plex, source d'inspiration sur le modèle Collection + délai de grâce
-- [Janitorr](https://github.com/Schaka/janitorr) — pour avoir montré que c'était possible côté Jellyfin
+- [Maintainerr](https://github.com/jorenn92/Maintainerr) — équivalent côté Plex, source d'inspiration pour le modèle Collection + délai de grâce
+- [Janitorr](https://github.com/Schaka/janitorr) — outil similaire pour Jellyfin (configuration YAML, sans interface web)
